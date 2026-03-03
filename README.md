@@ -59,6 +59,25 @@ This repo includes `.github/workflows/release.yml` to build and publish release 
 
 Manual run is also available using **workflow_dispatch** from the Actions tab.
 
+### Use released binary with OpenClaw
+
+After a release is published, OpenClaw can run the prebuilt daemon directly (no Rust toolchain needed).
+
+1. Download and extract release artifact:
+
+```bash
+curl -L -o ews-skilld-linux-x86_64.tar.gz \
+  https://github.com/hexbyte42-bot/ews-skill/releases/download/v0.1.0/ews-skilld-linux-x86_64.tar.gz
+mkdir -p /opt/ews-skill
+tar -xzf ews-skilld-linux-x86_64.tar.gz -C /opt/ews-skill
+```
+
+2. Configure env file (`/opt/ews-skill/.env`) and point OpenClaw process config to:
+
+```bash
+/opt/ews-skill/ews_skilld
+```
+
 ## Automatic background syncing
 
 Background sync starts when an `EwsSkill` instance is alive. For OpenClaw external-process mode,
