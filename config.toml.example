@@ -1,0 +1,37 @@
+# EWS Skill Configuration
+
+[exchange]
+# Username format: DOMAIN\user or user@domain.com
+username = "DOMAIN\\user"
+password = "your_password"
+email = "user@company.com"
+auth_mode = "basic" # basic | ntlm | oauth (oauth not implemented)
+
+# Use autodiscover to find EWS endpoint (recommended)
+autodiscover = true
+
+# Or specify EWS URL directly (if autodiscover is false)
+# ews_url = "https://mail.company.com/EWS/Exchange.asmx"
+
+# Network retry policy
+retry_max_attempts = 5
+retry_base_ms = 500
+retry_max_backoff_ms = 10000
+
+[cache]
+# SQLite database path
+path = "ews_cache.db"
+
+# Perform full sync on initial startup
+initial_sync = true
+
+# Maximum emails to cache per folder
+max_cached_emails = 10000
+
+[sync]
+# Folders to sync (array or comma-separated string)
+# Default: ["Inbox"]
+folders = ["Inbox"]
+
+# Sync interval in seconds
+interval_seconds = 30

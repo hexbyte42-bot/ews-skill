@@ -1,0 +1,16 @@
+[Unit]
+Description=EWS Skill Stdio JSON-RPC Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/ews-skill
+EnvironmentFile=/opt/ews-skill/.env
+ExecStart=/opt/ews-skill/target/release/ews_skilld
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+{
+  "name": "ews-skill",
+  "transport": "stdio",
+  "command": "/opt/ews-skill/target/release/ews_skilld",
+  "args": [],
+  "cwd": "/opt/ews-skill",
+  "env": {
+    "EWS_EMAIL": "user@company.com",
+    "EWS_PASSWORD": "***",
+    "EWS_USERNAME": "DOMAIN\\user",
+    "EWS_AUTH_MODE": "ntlm",
+    "EWS_AUTODISCOVER": "true",
+    "EWS_SYNC_FOLDERS": "Inbox,Sent Items",
+    "EWS_SYNC_INTERVAL_SECONDS": "30",
+    "EWS_LOG_LEVEL": "info",
+    "EWS_RETRY_MAX_ATTEMPTS": "5",
+    "EWS_RETRY_BASE_MS": "500",
+    "EWS_RETRY_MAX_BACKOFF_MS": "10000"
+  },
+  "startup_probe": {
+    "method": "health.get",
+    "params": {},
+    "expect": {
+      "result.success": true,
+      "result.data.auth_ok": true
+    }
+  }
+}
