@@ -17,6 +17,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install curl dependencies (NTLM-capable)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl \
+            libcurl4-openssl-dev \
+            ca-certificates \
+            pkg-config
+
+      - name: Show curl features
+        run: |
+          curl -V
+          pkg-config --modversion libcurl || true
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -25,6 +39,10 @@ jobs:
 
       - name: Build release daemon
         run: cargo build --release --bin ews_skilld
+
+      - name: Show linked curl libs
+        run: |
+          ldd ./target/release/ews_skilld | grep -i curl || true
 
       - name: Verify NTLM support in binary
         run: |
