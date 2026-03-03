@@ -10,7 +10,7 @@
     "EWS_USERNAME": "DOMAIN\\user",
     "EWS_AUTH_MODE": "ntlm",
     "EWS_AUTODISCOVER": "true",
-    "EWS_SYNC_FOLDERS": "Inbox,Sent Items",
+    "EWS_SYNC_FOLDERS": "inbox,sentitems",
     "EWS_SYNC_INTERVAL_SECONDS": "30",
     "EWS_LOG_LEVEL": "info",
     "EWS_RETRY_MAX_ATTEMPTS": "5",

@@ -21,7 +21,7 @@ fn main() {
 
     let list = skill.execute_tool(
         "email_list",
-        json!({ "folder_name": "Inbox", "limit": 5, "unread_only": false }),
+        json!({ "folder_name": "inbox", "limit": 5, "unread_only": false }),
     );
     println!("email_list={}", list.success);
     if let Some(data) = list.data {

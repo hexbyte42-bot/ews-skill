@@ -137,7 +137,7 @@ impl EmailSkill {
     }
 
     pub fn get_unread(&self, folder_name: Option<String>, limit: Option<i32>) -> ToolResult {
-        let folder = folder_name.unwrap_or_else(|| "Inbox".to_string());
+        let folder = folder_name.unwrap_or_else(|| "inbox".to_string());
         let emails = self.service.get_unread(&folder, limit.unwrap_or(20));
 
         let data: Vec<_> = emails
@@ -241,7 +241,7 @@ impl EmailSkill {
                     "properties": {
                         "folder_name": {
                             "type": "string",
-                            "description": "Folder name (default: Inbox)"
+                            "description": "Folder name or distinguished id (default: inbox)"
                         },
                         "limit": {
                             "type": "number",
@@ -295,7 +295,7 @@ impl EmailSkill {
                     "properties": {
                         "folder_name": {
                             "type": "string",
-                            "description": "Folder name (default: Inbox)"
+                            "description": "Folder name or distinguished id (default: inbox)"
                         },
                         "limit": {
                             "type": "number",

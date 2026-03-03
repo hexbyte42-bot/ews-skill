@@ -255,7 +255,41 @@ impl EwsClient {
         Ok(response.response_messages.get_folder.folders.folder)
     }
 
+    pub async fn get_distinguished_folder(&self, distinguished_id: &str) -> Result<Folder, EwsError> {
+        let safe_id = escape_xml(distinguished_id);
+        let body = format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+            <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+                          xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+                <soap:Header>
+                    <t:RequestServerVersion Version="Exchange2016"/>
+                </soap:Header>
+                <soap:Body>
+                    <GetFolder xmlns="http://schemas.microsoft.com/exchange/services/2006/messages">
+                        <FolderShape>
+                            <t:BaseShape>Default</t:BaseShape>
+                        </FolderShape>
+                        <FolderIds>
+                            <t:DistinguishedFolderId Id="{}"/>
+                        </FolderIds>
+                    </GetFolder>
+                </soap:Body>
+            </soap:Envelope>"#,
+            safe_id
+        );
+
+        let response: GetFolderResponse = self.send_request("GetFolder", body).await?;
+        Ok(response.response_messages.get_folder.folders.folder)
+    }
+
     pub async fn find_folder(&self, folder_name: &str) -> Result<Option<Folder>, EwsError> {
+        if let Some(distinguished_id) = distinguished_folder_id_from_spec(folder_name) {
+            return self
+                .get_distinguished_folder(distinguished_id)
+                .await
+                .map(Some);
+        }
+
         let body = format!(
             r#"<?xml version="1.0" encoding="utf-8"?>
             <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
@@ -808,6 +842,25 @@ fn backoff_delay(attempt: u32, base_ms: u64, max_backoff_ms: u64) -> Duration {
     let capped = min(exp, max_backoff_ms);
     let jitter = ((attempt as u64).saturating_mul(137)) % 251;
     Duration::from_millis(capped.saturating_add(jitter))
+}
+
+pub fn distinguished_folder_id_from_spec(spec: &str) -> Option<&'static str> {
+    let normalized = spec.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "inbox" => Some("inbox"),
+        "sent" | "sentitems" | "sent_items" | "sent items" => Some("sentitems"),
+        "draft" | "drafts" => Some("drafts"),
+        "deleted" | "deleteditems" | "deleted_items" | "deleted items" | "trash" => {
+            Some("deleteditems")
+        }
+        "junk" | "junkemail" | "junk_email" | "junk email" | "spam" => Some("junkemail"),
+        "archive" => Some("archive"),
+        "outbox" => Some("outbox"),
+        "calendar" => Some("calendar"),
+        "contacts" => Some("contacts"),
+        "tasks" => Some("tasks"),
+        _ => None,
+    }
 }
 
 fn normalized_auth_mode(mode: &str) -> &str {

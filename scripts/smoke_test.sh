@@ -18,7 +18,7 @@ if [[ -z "${EWS_URL:-}" && -z "${EWS_AUTODISCOVER:-}" ]]; then
   echo "EWS_URL not set, defaulting EWS_AUTODISCOVER=true"
 fi
 
-FOLDER="${SMOKE_FOLDER:-Inbox}"
+FOLDER="${SMOKE_FOLDER:-inbox}"
 LIMIT="${SMOKE_LIMIT:-10}"
 
 echo "Building example..."

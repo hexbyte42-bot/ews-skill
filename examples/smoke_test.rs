@@ -23,7 +23,7 @@ fn first_email_id(result: &ToolResult) -> Option<String> {
 }
 
 fn parse_args() -> (String, i32, Option<String>, bool) {
-    let mut folder = "Inbox".to_string();
+    let mut folder = "inbox".to_string();
     let mut limit = 10;
     let mut send_to: Option<String> = None;
     let mut do_write = false;

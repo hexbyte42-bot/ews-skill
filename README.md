@@ -125,7 +125,7 @@ EWS_PASSWORD=***
 EWS_USERNAME=DOMAIN\user
 EWS_AUTH_MODE=ntlm
 EWS_AUTODISCOVER=true
-EWS_SYNC_FOLDERS=Inbox,Sent Items
+EWS_SYNC_FOLDERS=inbox,sentitems
 EWS_SYNC_INTERVAL_SECONDS=30
 EWS_LOG_LEVEL=info
 EWS_RETRY_MAX_ATTEMPTS=5
@@ -181,7 +181,7 @@ Request example (`tools.list`):
 Request example (`tools.call`):
 
 ```json
-{"jsonrpc":"2.0","id":2,"method":"tools.call","params":{"name":"email_list","args":{"folder_name":"Inbox","limit":10}}}
+{"jsonrpc":"2.0","id":2,"method":"tools.call","params":{"name":"email_list","args":{"folder_name":"inbox","limit":10}}}
 ```
 
 Response shape:
@@ -261,11 +261,11 @@ SELECT id, display_name, unread_count, total_count, synced_at
 FROM folders
 ORDER BY display_name;
 
--- latest emails in Inbox
+-- latest emails in inbox
 SELECT e.id, e.subject, e.sender_email, e.is_read, e.datetime_received
 FROM emails e
 JOIN folders f ON f.id = e.folder_id
-WHERE f.display_name = 'Inbox'
+WHERE LOWER(f.display_name) = 'inbox'
 ORDER BY e.datetime_received DESC
 LIMIT 20;
 

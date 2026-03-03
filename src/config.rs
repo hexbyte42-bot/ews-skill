@@ -118,7 +118,7 @@ pub struct SyncConfig {
 }
 
 fn default_folders() -> Vec<String> {
-    vec!["Inbox".to_string()]
+    vec!["inbox".to_string()]
 }
 
 fn deserialize_folders<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>

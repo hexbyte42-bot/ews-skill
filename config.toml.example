@@ -30,8 +30,9 @@ max_cached_emails = 10000
 
 [sync]
 # Folders to sync (array or comma-separated string)
-# Default: ["Inbox"]
-folders = ["Inbox"]
+# Use distinguished folder ids for language-neutral behavior (recommended)
+# Default: ["inbox"]
+folders = ["inbox"]
 
 # Sync interval in seconds
 interval_seconds = 30

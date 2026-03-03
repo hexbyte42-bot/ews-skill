@@ -162,7 +162,7 @@ impl EmailService {
         let mut auth_ok = false;
         let mut inbox_found = false;
 
-        if let Ok(folder) = self.sync_engine.find_and_cache_folder("Inbox").await {
+        if let Ok(folder) = self.sync_engine.find_and_cache_folder("inbox").await {
             auth_ok = true;
             inbox_found = folder.is_some();
         }

@@ -1,6 +1,6 @@
 use crate::cache::{CachedEmail, CachedFolder, Repository, SyncState};
 use crate::config::Config;
-use crate::ews_client::EwsClient;
+use crate::ews_client::{distinguished_folder_id_from_spec, EwsClient};
 use chrono::Utc;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -64,11 +64,12 @@ impl SyncEngine {
             .map_err(|e| e.to_string())?;
 
         if let Some(f) = folder {
+            let canonical = distinguished_folder_id_from_spec(name).unwrap_or(name);
             let cached = CachedFolder {
                 id: f.folder_id.id,
                 change_key: Some(f.folder_id.change_key),
                 parent_id: None,
-                display_name: f.display_name,
+                display_name: canonical.to_string(),
                 unread_count: f.unread_count,
                 total_count: f.total_count,
                 synced_at: Utc::now(),
