@@ -38,7 +38,7 @@ jobs:
         run: cargo check --all-targets
 
       - name: Build release daemon
-        run: cargo build --release --bin ews_skilld
+        run: cargo build --release --bin ews_skilld --bin ews_skillctl
 
       - name: Show linked curl libs
         run: |
@@ -52,10 +52,11 @@ jobs:
         run: |
           mkdir -p release
           cp target/release/ews_skilld release/
+          cp target/release/ews_skillctl release/
           cp config.toml.example release/
           cp openclaw/stdio-service.example.json release/
           cp systemd/ews-skill-sync.service release/
-          tar -czf ews-skilld-linux-x86_64.tar.gz -C release ews_skilld config.toml.example stdio-service.example.json ews-skill-sync.service
+          tar -czf ews-skilld-linux-x86_64.tar.gz -C release ews_skilld ews_skillctl config.toml.example stdio-service.example.json ews-skill-sync.service
           sha256sum ews-skilld-linux-x86_64.tar.gz > ews-skilld-linux-x86_64.tar.gz.sha256
 
       - name: Upload build artifact

@@ -36,6 +36,7 @@ After workflow completion, verify:
    Expected output: `NTLM_SUPPORTED=true`
 4. Extracted package contains:
    - `ews_skilld`
+   - `ews_skillctl`
    - `config.toml.example`
    - `stdio-service.example.json`
    - `ews-skill-sync.service`

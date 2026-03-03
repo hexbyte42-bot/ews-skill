@@ -2,9 +2,11 @@ use ews_skill::{ews_client::ntlm_supported, skill::ToolResult, EwsSkill};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
-use std::io::{self, BufRead, BufWriter, Write};
-use std::path::Path;
-use std::path::PathBuf;
+use std::fs;
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -40,6 +42,18 @@ struct ToolCallParams {
     args: Value,
 }
 
+#[derive(Debug, Clone)]
+enum Transport {
+    Stdio,
+    Unix(PathBuf),
+}
+
+#[derive(Debug, Clone)]
+struct CliOptions {
+    config_path: Option<PathBuf>,
+    transport: Transport,
+}
+
 fn main() {
     let _log_guard = init_daemon_logging();
 
@@ -54,9 +68,17 @@ fn main() {
         }
     }
 
+    let options = match parse_cli_options() {
+        Ok(opts) => opts,
+        Err(e) => {
+            error!("invalid cli options: {}", e);
+            std::process::exit(2);
+        }
+    };
+
     info!("starting ews_skilld");
 
-    let skill = match init_skill() {
+    let skill = match init_skill(&options) {
         Ok(skill) => skill,
         Err(e) => {
             error!("failed to initialize ews_skilld: {}", e);
@@ -64,8 +86,69 @@ fn main() {
         }
     };
 
-    info!("ews_skilld started (stdio JSON-RPC)");
+    match options.transport {
+        Transport::Stdio => {
+            info!("ews_skilld started (stdio JSON-RPC)");
+            run_stdio(&skill);
+        }
+        Transport::Unix(socket_path) => {
+            info!(socket = %socket_path.display(), "ews_skilld started (unix socket JSON-RPC)");
+            if let Err(e) = run_unix_socket(&skill, &socket_path) {
+                error!("unix socket server failed: {}", e);
+                std::process::exit(2);
+            }
+        }
+    }
 
+    info!("ews_skilld stopped");
+}
+
+fn parse_cli_options() -> Result<CliOptions, String> {
+    let mut args = env::args().skip(1);
+    let mut config_path: Option<PathBuf> = None;
+    let mut transport = Transport::Stdio;
+    let mut socket_path = PathBuf::from("/run/ews-skill/daemon.sock");
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--check-ntlm" => {}
+            "--config" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--config requires a path value".to_string())?;
+                config_path = Some(PathBuf::from(value));
+            }
+            "--transport" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--transport requires a value (stdio|unix)".to_string())?;
+                match value.as_str() {
+                    "stdio" => transport = Transport::Stdio,
+                    "unix" => transport = Transport::Unix(socket_path.clone()),
+                    _ => return Err(format!("unsupported transport: {}", value)),
+                }
+            }
+            "--socket" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--socket requires a path value".to_string())?;
+                socket_path = PathBuf::from(value);
+            }
+            _ => return Err(format!("unknown argument: {}", arg)),
+        }
+    }
+
+    if matches!(transport, Transport::Unix(_)) {
+        transport = Transport::Unix(socket_path);
+    }
+
+    Ok(CliOptions {
+        config_path,
+        transport,
+    })
+}
+
+fn run_stdio(skill: &EwsSkill) {
     let stdin = io::stdin();
     let mut stdout = BufWriter::new(io::stdout());
 
@@ -86,21 +169,73 @@ fn main() {
             continue;
         }
 
-        let response = match serde_json::from_str::<RpcRequest>(&line) {
-            Ok(request) => handle_request(&skill, request),
-            Err(e) => {
-                warn!("json-rpc parse error: {}", e);
-                rpc_error_response(Value::Null, -32700, format!("parse error: {}", e))
-            }
-        };
-
+        let response = parse_and_handle(skill, &line);
         if let Err(e) = write_response(&mut stdout, response) {
             error!("failed writing rpc response: {}", e);
             break;
         }
     }
+}
 
-    info!("ews_skilld stopped");
+fn run_unix_socket(skill: &EwsSkill, socket_path: &Path) -> Result<(), String> {
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    if socket_path.exists() {
+        fs::remove_file(socket_path).map_err(|e| e.to_string())?;
+    }
+
+    let listener = UnixListener::bind(socket_path).map_err(|e| e.to_string())?;
+    fs::set_permissions(socket_path, fs::Permissions::from_mode(0o660))
+        .map_err(|e| e.to_string())?;
+
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                if let Err(e) = handle_unix_client(skill, stream) {
+                    warn!("unix client error: {}", e);
+                }
+            }
+            Err(e) => warn!("failed to accept unix socket connection: {}", e),
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_unix_client(skill: &EwsSkill, stream: UnixStream) -> Result<(), String> {
+    let reader = stream.try_clone().map_err(|e| e.to_string())?;
+    let mut reader = BufReader::new(reader);
+    let mut writer = BufWriter::new(stream);
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let bytes = reader.read_line(&mut line).map_err(|e| e.to_string())?;
+        if bytes == 0 {
+            break;
+        }
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let response = parse_and_handle(skill, line.trim());
+        write_response(&mut writer, response).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn parse_and_handle(skill: &EwsSkill, raw: &str) -> RpcResponse {
+    match serde_json::from_str::<RpcRequest>(raw) {
+        Ok(request) => handle_request(skill, request),
+        Err(e) => {
+            warn!("json-rpc parse error: {}", e);
+            rpc_error_response(Value::Null, -32700, format!("parse error: {}", e))
+        }
+    }
 }
 
 fn init_daemon_logging() -> Option<WorkerGuard> {
@@ -137,24 +272,9 @@ fn init_daemon_logging() -> Option<WorkerGuard> {
     None
 }
 
-fn init_skill() -> Result<EwsSkill, String> {
-    let mut args = env::args().skip(1);
-    let mut config_path: Option<PathBuf> = None;
-
-    while let Some(arg) = args.next() {
-        if arg == "--check-ntlm" {
-            continue;
-        }
-        if arg == "--config" {
-            let value = args
-                .next()
-                .ok_or_else(|| "--config requires a path value".to_string())?;
-            config_path = Some(PathBuf::from(value));
-        }
-    }
-
-    if let Some(path) = config_path {
-        EwsSkill::from_config_file(&path)
+fn init_skill(options: &CliOptions) -> Result<EwsSkill, String> {
+    if let Some(path) = &options.config_path {
+        EwsSkill::from_config_file(path)
     } else {
         EwsSkill::from_env()
     }
@@ -184,15 +304,13 @@ fn handle_request(skill: &EwsSkill, request: RpcRequest) -> RpcResponse {
                         id,
                         -32602,
                         "invalid params: expected object with name and args".to_string(),
-                    );
+                    )
                 }
             };
 
             let call = match serde_json::from_value::<ToolCallParams>(params) {
                 Ok(value) => value,
-                Err(e) => {
-                    return rpc_error_response(id, -32602, format!("invalid params: {}", e));
-                }
+                Err(e) => return rpc_error_response(id, -32602, format!("invalid params: {}", e)),
             };
 
             let args = match call.args {
@@ -203,7 +321,7 @@ fn handle_request(skill: &EwsSkill, request: RpcRequest) -> RpcResponse {
                         id,
                         -32602,
                         "invalid params: args must be a JSON object".to_string(),
-                    );
+                    )
                 }
             };
 

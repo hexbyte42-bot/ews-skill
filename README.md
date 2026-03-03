@@ -18,15 +18,17 @@ There are two ways to obtain the daemon binary. After that, setup/run steps are 
 ### Option A: build from source
 
 ```bash
-cargo build --release --bin ews_skilld
+cargo build --release --bin ews_skilld --bin ews_skillctl
 sudo mkdir -p /opt/ews-skill
 sudo cp target/release/ews_skilld /opt/ews-skill/ews_skilld
+sudo cp target/release/ews_skillctl /opt/ews-skill/ews_skillctl
 ```
 
-Binary path:
+Binary paths:
 
 ```bash
 /opt/ews-skill/ews_skilld
+/opt/ews-skill/ews_skillctl
 ```
 
 ### Option B: use precompiled release binary
@@ -42,10 +44,11 @@ tar -xzf ews-skilld-linux-x86_64.tar.gz -C /opt/ews-skill
 /opt/ews-skill/ews_skilld --check-ntlm
 ```
 
-Binary path:
+Binary paths:
 
 ```bash
 /opt/ews-skill/ews_skilld
+/opt/ews-skill/ews_skillctl
 ```
 
 ### Common setup/run steps (same for both options)
@@ -67,7 +70,7 @@ export EWS_RETRY_BASE_MS=500
 export EWS_RETRY_MAX_BACKOFF_MS=10000
 ```
 
-2. Run daemon:
+2. Run daemon manually (optional):
 
 ```bash
 /opt/ews-skill/ews_skilld
@@ -81,8 +84,8 @@ export EWS_RETRY_MAX_BACKOFF_MS=10000
 
 ### Use released binary with OpenClaw
 
-OpenClaw can run the prebuilt daemon directly (no Rust toolchain needed). For both source build
-and release install, keep the daemon at the same path: `/opt/ews-skill/ews_skilld`.
+OpenClaw should run `/opt/ews-skill/ews_skillctl` (stdio bridge) and communicate with the
+systemd-managed daemon socket.
 
 For maintainers who publish release binaries, see `docs/releasing.md`.
 
@@ -109,8 +112,9 @@ sudo mkdir -p /opt/ews-skill
 
 # Source-build mode
 sudo rsync -av ./ /opt/ews-skill/
-cd /opt/ews-skill && cargo build --release --bin ews_skilld
+cd /opt/ews-skill && cargo build --release --bin ews_skilld --bin ews_skillctl
 cp /opt/ews-skill/target/release/ews_skilld /opt/ews-skill/ews_skilld
+cp /opt/ews-skill/target/release/ews_skillctl /opt/ews-skill/ews_skillctl
 
 # OR release-binary mode
 # extract ews_skilld-linux-x86_64.tar.gz into /opt/ews-skill
@@ -153,7 +157,10 @@ sudo journalctl -u ews-skill-sync.service -f
 
 ## OpenClaw integration
 
-Primary integration mode is external process. Launch `ews_skilld` and communicate over stdio JSON-RPC.
+Primary integration mode is external process:
+
+- systemd runs `ews_skilld` (Exchange sync + cache) over Unix socket
+- OpenClaw runs `ews_skillctl` (stdio bridge) and forwards JSON-RPC to daemon socket
 
 Why this is a good fit for OpenClaw:
 
@@ -206,14 +213,19 @@ Daemon logging:
 - Level control: `EWS_LOG_LEVEL` (or `RUST_LOG`)
 - Optional file output: `EWS_DAEMON_LOG_FILE=/path/to/ews_skilld.log`
 
+Socket path:
+
+- daemon default: `/run/ews-skill/daemon.sock`
+- bridge override: `EWS_SOCKET_PATH=/run/ews-skill/daemon.sock`
+
 ### OpenClaw launch config example
 
 See `openclaw/stdio-service.example.json` for a ready-to-adapt process definition.
 
-Minimal launch command:
+Minimal launch command (OpenClaw):
 
 ```bash
-/opt/ews-skill/ews_skilld
+/opt/ews-skill/ews_skillctl
 ```
 
 Recommended startup handshake from OpenClaw:

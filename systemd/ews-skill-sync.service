@@ -5,10 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=%i
 WorkingDirectory=/opt/ews-skill
 EnvironmentFile=/opt/ews-skill/.env
-ExecStart=/opt/ews-skill/ews_skilld
+RuntimeDirectory=ews-skill
+RuntimeDirectoryMode=0755
+ExecStart=/opt/ews-skill/ews_skilld --transport unix --socket /run/ews-skill/daemon.sock
 Restart=always
 RestartSec=5
 
