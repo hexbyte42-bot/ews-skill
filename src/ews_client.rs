@@ -44,6 +44,10 @@ pub struct EwsClient {
     options: EwsClientOptions,
 }
 
+pub fn ntlm_supported() -> bool {
+    curl::Version::get().feature_ntlm()
+}
+
 #[derive(Debug, Clone)]
 pub struct EwsClientOptions {
     pub retry_max_attempts: u32,

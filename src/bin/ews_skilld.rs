@@ -1,4 +1,4 @@
-use ews_skill::{skill::ToolResult, EwsSkill};
+use ews_skill::{ews_client::ntlm_supported, skill::ToolResult, EwsSkill};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
@@ -42,6 +42,17 @@ struct ToolCallParams {
 
 fn main() {
     let _log_guard = init_daemon_logging();
+
+    let args: Vec<String> = env::args().collect();
+    if args.iter().any(|a| a == "--check-ntlm") {
+        if ntlm_supported() {
+            println!("NTLM_SUPPORTED=true");
+            std::process::exit(0);
+        } else {
+            eprintln!("NTLM_SUPPORTED=false");
+            std::process::exit(1);
+        }
+    }
 
     info!("starting ews_skilld");
 
@@ -131,6 +142,9 @@ fn init_skill() -> Result<EwsSkill, String> {
     let mut config_path: Option<PathBuf> = None;
 
     while let Some(arg) = args.next() {
+        if arg == "--check-ntlm" {
+            continue;
+        }
         if arg == "--config" {
             let value = args
                 .next()

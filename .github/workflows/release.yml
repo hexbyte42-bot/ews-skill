@@ -26,6 +26,10 @@ jobs:
       - name: Build release daemon
         run: cargo build --release --bin ews_skilld
 
+      - name: Verify NTLM support in binary
+        run: |
+          ./target/release/ews_skilld --check-ntlm
+
       - name: Package release bundle
         run: |
           mkdir -p release

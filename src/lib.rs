@@ -8,7 +8,7 @@ pub mod sync_engine;
 use cache::{Database, Repository};
 use config::Config;
 use email_service::EmailService;
-use ews_client::{EwsClient, EwsClientOptions};
+use ews_client::{ntlm_supported, EwsClient, EwsClientOptions};
 use serde_json::Value;
 use skill::EmailSkill;
 use std::sync::{Arc, Mutex};
@@ -42,6 +42,13 @@ impl EwsSkill {
             email: config.exchange.email.clone(),
             auth_mode: config.exchange.auth_mode.clone(),
         };
+
+        if credentials.auth_mode.eq_ignore_ascii_case("ntlm") && !ntlm_supported() {
+            return Err(
+                "NTLM authentication requested, but this ews_skilld build does not include NTLM-enabled libcurl"
+                    .to_string(),
+            );
+        }
 
         let client_options = EwsClientOptions {
             retry_max_attempts: config.exchange.retry_max_attempts,

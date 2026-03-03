@@ -39,6 +39,7 @@ curl -L -o ews-skilld-linux-x86_64.tar.gz.sha256 \
 sha256sum -c ews-skilld-linux-x86_64.tar.gz.sha256
 mkdir -p /opt/ews-skill
 tar -xzf ews-skilld-linux-x86_64.tar.gz -C /opt/ews-skill
+/opt/ews-skill/ews_skilld --check-ntlm
 ```
 
 Binary path:
@@ -160,6 +161,10 @@ Why this is a good fit for OpenClaw:
 - Exchange traffic is reduced to scheduled incremental sync.
 - Transient network/server failures are isolated in the daemon with retry/backoff.
 - OpenClaw only needs a simple stdio JSON-RPC contract.
+
+NTLM requirement note:
+
+- For on-prem Exchange with `EWS_AUTH_MODE=ntlm`, always use a release that passes `--check-ntlm`.
 
 ### Stdio JSON-RPC methods
 

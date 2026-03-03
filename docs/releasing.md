@@ -27,8 +27,19 @@ After workflow completion, verify:
 
 1. Artifacts are attached to the release.
 2. Checksum file exists and matches tarball.
-3. Extracted package contains:
+3. NTLM support probe succeeds:
+
+   ```bash
+   ./ews_skilld --check-ntlm
+   ```
+
+   Expected output: `NTLM_SUPPORTED=true`
+4. Extracted package contains:
    - `ews_skilld`
    - `config.toml.example`
    - `stdio-service.example.json`
    - `ews-skill-sync.service`
+
+## Known note
+
+- If a release fails `--check-ntlm`, mark it as not suitable for NTLM environments.
