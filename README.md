@@ -13,13 +13,43 @@ EWS email skill for OpenClaw with Outlook-style local cache (SQLite), autodiscov
 
 ## Quick start
 
-1. Create env file (local only):
+There are two ways to obtain the daemon binary. After that, setup/run steps are the same.
+
+### Option A: build from source
 
 ```bash
-cp config.toml.example config.toml
+cargo build --release --bin ews_skilld
+sudo mkdir -p /opt/ews-skill
+sudo cp target/release/ews_skilld /opt/ews-skill/ews_skilld
 ```
 
-2. Export runtime env vars:
+Binary path:
+
+```bash
+/opt/ews-skill/ews_skilld
+```
+
+### Option B: use precompiled release binary
+
+```bash
+curl -L -o ews-skilld-linux-x86_64.tar.gz \
+  https://github.com/hexbyte42-bot/ews-skill/releases/latest/download/ews-skilld-linux-x86_64.tar.gz
+curl -L -o ews-skilld-linux-x86_64.tar.gz.sha256 \
+  https://github.com/hexbyte42-bot/ews-skill/releases/latest/download/ews-skilld-linux-x86_64.tar.gz.sha256
+sha256sum -c ews-skilld-linux-x86_64.tar.gz.sha256
+mkdir -p /opt/ews-skill
+tar -xzf ews-skilld-linux-x86_64.tar.gz -C /opt/ews-skill
+```
+
+Binary path:
+
+```bash
+/opt/ews-skill/ews_skilld
+```
+
+### Common setup/run steps (same for both options)
+
+1. Export runtime env vars:
 
 ```bash
 export EWS_EMAIL='user@company.com'
@@ -36,47 +66,24 @@ export EWS_RETRY_BASE_MS=500
 export EWS_RETRY_MAX_BACKOFF_MS=10000
 ```
 
-3. Build:
+2. Run daemon:
 
 ```bash
-cargo build --release
+/opt/ews-skill/ews_skilld
 ```
 
-4. Smoke test:
+3. Optional smoke test (source checkout only):
 
 ```bash
 ./scripts/smoke_test.sh
 ```
 
-## Release binaries via GitHub Actions
-
-This repo includes `.github/workflows/release.yml` to build and publish release artifacts.
-
-- Trigger release build by pushing a version tag (for example `v0.1.0`)
-- Artifacts published to GitHub Release:
-  - `ews-skilld-linux-x86_64.tar.gz`
-  - `ews-skilld-linux-x86_64.tar.gz.sha256`
-
-Manual run is also available using **workflow_dispatch** from the Actions tab.
-
 ### Use released binary with OpenClaw
 
-After a release is published, OpenClaw can run the prebuilt daemon directly (no Rust toolchain needed).
+OpenClaw can run the prebuilt daemon directly (no Rust toolchain needed). For both source build
+and release install, keep the daemon at the same path: `/opt/ews-skill/ews_skilld`.
 
-1. Download and extract release artifact:
-
-```bash
-curl -L -o ews-skilld-linux-x86_64.tar.gz \
-  https://github.com/hexbyte42-bot/ews-skill/releases/download/v0.1.0/ews-skilld-linux-x86_64.tar.gz
-mkdir -p /opt/ews-skill
-tar -xzf ews-skilld-linux-x86_64.tar.gz -C /opt/ews-skill
-```
-
-2. Configure env file (`/opt/ews-skill/.env`) and point OpenClaw process config to:
-
-```bash
-/opt/ews-skill/ews_skilld
-```
+For maintainers who publish release binaries, see `docs/releasing.md`.
 
 ## Automatic background syncing
 
@@ -91,13 +98,22 @@ cargo run --release --bin ews_skilld
 
 ### Option B: run as systemd service
 
-1. Install project on server:
+Systemd setup is identical for source-build and release-binary installs because both use the same
+daemon path: `/opt/ews-skill/ews_skilld`.
+
+1. Install files on server:
 
 ```bash
 sudo mkdir -p /opt/ews-skill
+
+# Source-build mode
 sudo rsync -av ./ /opt/ews-skill/
-cd /opt/ews-skill
-cargo build --release --bin ews_skilld
+cd /opt/ews-skill && cargo build --release --bin ews_skilld
+cp /opt/ews-skill/target/release/ews_skilld /opt/ews-skill/ews_skilld
+
+# OR release-binary mode
+# extract ews_skilld-linux-x86_64.tar.gz into /opt/ews-skill
+# (binary is already at /opt/ews-skill/ews_skilld)
 ```
 
 2. Create `/opt/ews-skill/.env` with credentials:
@@ -136,13 +152,14 @@ sudo journalctl -u ews-skill-sync.service -f
 
 ## OpenClaw integration
 
-Use these library entry points:
+Primary integration mode is external process. Launch `ews_skilld` and communicate over stdio JSON-RPC.
 
-- `EwsSkill::from_env()` or `EwsSkill::from_config_file(...)`
-- `EwsSkill::get_tools()` to register tools
-- `EwsSkill::execute_tool(tool_name, args_json)` to execute calls
+Why this is a good fit for OpenClaw:
 
-For external process mode, launch `ews_skilld` and communicate over stdio JSON-RPC.
+- Most read operations are served from local cache for lower latency.
+- Exchange traffic is reduced to scheduled incremental sync.
+- Transient network/server failures are isolated in the daemon with retry/backoff.
+- OpenClaw only needs a simple stdio JSON-RPC contract.
 
 ### Stdio JSON-RPC methods
 
@@ -191,7 +208,7 @@ See `openclaw/stdio-service.example.json` for a ready-to-adapt process definitio
 Minimal launch command:
 
 ```bash
-/opt/ews-skill/target/release/ews_skilld
+/opt/ews-skill/ews_skilld
 ```
 
 Recommended startup handshake from OpenClaw:
@@ -200,30 +217,9 @@ Recommended startup handshake from OpenClaw:
 2. `health.get`
 3. proceed only if `result.success=true` and `result.data.auth_ok=true`
 
-Example:
+### Optional: embedded Rust API
 
-```rust
-use ews_skill::EwsSkill;
-use serde_json::json;
-
-fn main() -> Result<(), String> {
-    let skill = EwsSkill::from_env()?;
-
-    let tools = EwsSkill::get_tools();
-    println!("registered {} tools", tools.len());
-
-    let health = skill.execute_tool("email_health", json!({}));
-    println!("health ok: {}", health.success);
-
-    let list = skill.execute_tool(
-        "email_list",
-        json!({ "folder_name": "Inbox", "limit": 10 }),
-    );
-    println!("list ok: {}", list.success);
-
-    Ok(())
-}
-```
+If you are not using OpenClaw external process mode, the crate still exposes `EwsSkill` APIs for embedded Rust integration.
 
 ## Exposed tools
 

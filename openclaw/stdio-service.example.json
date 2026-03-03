@@ -1,7 +1,7 @@
 {
   "name": "ews-skill",
   "transport": "stdio",
-  "command": "/opt/ews-skill/target/release/ews_skilld",
+  "command": "/opt/ews-skill/ews_skilld",
   "args": [],
   "cwd": "/opt/ews-skill",
   "env": {
