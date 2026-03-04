@@ -1,11 +1,11 @@
 {
   "name": "ews-skill",
   "transport": "stdio",
-  "command": "/opt/ews-skill/ews_skillctl",
+  "command": "__SKILL_PATH__/bin/ews_skillctl",
   "args": [],
-  "cwd": "/opt/ews-skill",
+  "cwd": "__SKILL_PATH__",
   "env": {
-    "EWS_SOCKET_PATH": "/run/ews-skill/daemon.sock"
+    "EWS_SOCKET_PATH": "__SOCKET_PATH__"
   },
   "startup_probe": {
     "method": "health.get",

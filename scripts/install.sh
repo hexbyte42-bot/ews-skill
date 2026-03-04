@@ -3,33 +3,27 @@ set -euo pipefail
 
 REPO="hexbyte42-bot/ews-skill"
 VERSION="latest"
-INSTALL_DIR="/opt/ews-skill"
+SKILL_PATH=""
 SERVICE_NAME="ews-skill-sync.service"
+RUN_USER=""
 NO_SYSTEMD="false"
 DRY_RUN="false"
-RUN_USER=""
+SOCKET_PATH="/run/ews-skill/daemon.sock"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/install.sh [options]
+Usage: scripts/install.sh --skill-path <absolute-path> [options]
 
 Options:
-  --version <tag>         Install a specific tag (example: v0.1.7). Default: latest
-  --install-dir <path>    Install directory. Default: /opt/ews-skill
+  --skill-path <path>     OpenClaw skill root path (required)
+  --version <tag>         Install a specific tag (example: v0.1.9). Default: latest
   --service-name <name>   Systemd unit name. Default: ews-skill-sync.service
   --run-user <user>       Run daemon as this user (default: invoking user)
+  --socket-path <path>    Daemon unix socket path. Default: /run/ews-skill/daemon.sock
   --no-systemd            Skip systemd install/restart
   --dry-run               Print actions without changing system
   -h, --help              Show this help
 EOF
-}
-
-run() {
-  if [[ "$DRY_RUN" == "true" ]]; then
-    printf '[dry-run] %s\n' "$*"
-  else
-    eval "$@"
-  fi
 }
 
 need_cmd() {
@@ -39,14 +33,34 @@ need_cmd() {
   fi
 }
 
+run_cmd() {
+  if [[ "$DRY_RUN" == "true" ]]; then
+    printf '[dry-run]'
+    for arg in "$@"; do
+      printf ' %q' "$arg"
+    done
+    printf '\n'
+  else
+    "$@"
+  fi
+}
+
+run_maybe_cmd() {
+  if [[ "$DRY_RUN" == "true" ]]; then
+    run_cmd "$@"
+  else
+    "$@" || true
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --version)
-      VERSION="${2:-}"
+    --skill-path)
+      SKILL_PATH="${2:-}"
       shift 2
       ;;
-    --install-dir)
-      INSTALL_DIR="${2:-}"
+    --version)
+      VERSION="${2:-}"
       shift 2
       ;;
     --service-name)
@@ -55,6 +69,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run-user)
       RUN_USER="${2:-}"
+      shift 2
+      ;;
+    --socket-path)
+      SOCKET_PATH="${2:-}"
       shift 2
       ;;
     --no-systemd)
@@ -77,12 +95,27 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -z "$SKILL_PATH" ]]; then
+  printf 'Missing required option: --skill-path\n' >&2
+  usage
+  exit 2
+fi
+
+if [[ "${SKILL_PATH:0:1}" != "/" ]]; then
+  printf '--skill-path must be an absolute path: %s\n' "$SKILL_PATH" >&2
+  exit 2
+fi
+
 need_cmd curl
 need_cmd tar
 need_cmd sha256sum
 need_cmd install
 need_cmd id
-need_cmd awk
+need_cmd sed
+
+if [[ "$NO_SYSTEMD" == "false" ]]; then
+  need_cmd systemctl
+fi
 
 if [[ "$EUID" -ne 0 ]]; then
   SUDO="sudo"
@@ -91,7 +124,7 @@ else
 fi
 
 if [[ -z "$RUN_USER" ]]; then
-  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+  if [[ -n "${SUDO_USER:-}" ]]; then
     RUN_USER="$SUDO_USER"
   else
     RUN_USER="$(id -un)"
@@ -100,6 +133,11 @@ fi
 
 if ! id "$RUN_USER" >/dev/null 2>&1; then
   printf 'Run user does not exist: %s\n' "$RUN_USER" >&2
+  exit 1
+fi
+
+if [[ "$RUN_USER" == "root" ]]; then
+  printf 'Refusing to install service as root. Use --run-user <openclaw-user>.\n' >&2
   exit 1
 fi
 
@@ -120,9 +158,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-printf 'Installing ews-skill from %s\n' "$BASE_URL"
-run "curl -fsSL \"${BASE_URL}/${ARCHIVE}\" -o \"${TMP_DIR}/${ARCHIVE}\""
-run "curl -fsSL \"${BASE_URL}/${CHECKSUM_FILE}\" -o \"${TMP_DIR}/${CHECKSUM_FILE}\""
+printf 'Preparing fresh install for skill path: %s\n' "$SKILL_PATH"
+
+if [[ "$NO_SYSTEMD" == "false" ]]; then
+  run_maybe_cmd $SUDO systemctl stop "$SERVICE_NAME"
+  run_maybe_cmd $SUDO systemctl disable "$SERVICE_NAME"
+  run_cmd $SUDO rm -f "/etc/systemd/system/${SERVICE_NAME}"
+  run_cmd $SUDO systemctl daemon-reload
+fi
+
+run_cmd $SUDO rm -f "/opt/ews-skill/ews_skilld" "/opt/ews-skill/ews_skillctl"
+run_cmd $SUDO rm -f "${SKILL_PATH}/bin/ews_skilld" "${SKILL_PATH}/bin/ews_skillctl"
+
+printf 'Downloading binaries from %s\n' "$BASE_URL"
+run_cmd curl -fsSL "${BASE_URL}/${ARCHIVE}" -o "${TMP_DIR}/${ARCHIVE}"
+run_cmd curl -fsSL "${BASE_URL}/${CHECKSUM_FILE}" -o "${TMP_DIR}/${CHECKSUM_FILE}"
 
 if [[ "$DRY_RUN" == "false" ]]; then
   (
@@ -131,56 +181,84 @@ if [[ "$DRY_RUN" == "false" ]]; then
   )
 fi
 
-run "mkdir -p \"${TMP_DIR}/extract\""
-run "tar -xzf \"${TMP_DIR}/${ARCHIVE}\" -C \"${TMP_DIR}/extract\""
-
-for bin in ews_skilld ews_skillctl; do
-  if [[ "$DRY_RUN" == "false" && ! -f "${TMP_DIR}/extract/${bin}" ]]; then
-    printf 'Archive missing binary: %s\n' "$bin" >&2
-    exit 1
-  fi
-done
-
-run "$SUDO mkdir -p \"${INSTALL_DIR}\""
-run "$SUDO install -m 0755 \"${TMP_DIR}/extract/ews_skilld\" \"${INSTALL_DIR}/ews_skilld\""
-run "$SUDO install -m 0755 \"${TMP_DIR}/extract/ews_skillctl\" \"${INSTALL_DIR}/ews_skillctl\""
+run_cmd mkdir -p "${TMP_DIR}/extract"
+run_cmd tar -xzf "${TMP_DIR}/${ARCHIVE}" -C "${TMP_DIR}/extract"
 
 if [[ "$DRY_RUN" == "false" ]]; then
-  "$INSTALL_DIR/ews_skilld" --check-ntlm
-else
-  printf '[dry-run] %s --check-ntlm\n' "$INSTALL_DIR/ews_skilld"
+  for bin in ews_skilld ews_skillctl; do
+    if [[ ! -f "${TMP_DIR}/extract/${bin}" ]]; then
+      printf 'Archive missing binary: %s\n' "$bin" >&2
+      exit 1
+    fi
+  done
 fi
 
-if [[ "$DRY_RUN" == "false" && ! -f "${INSTALL_DIR}/.env" ]]; then
-  run "$SUDO install -m 0600 \"scripts/ews-skill.env.example\" \"${INSTALL_DIR}/.env\""
-  run "$SUDO chown \"${RUN_USER}:${RUN_GROUP}\" \"${INSTALL_DIR}/.env\""
-  printf 'Created %s/.env from template. Update credentials before starting service.\n' "$INSTALL_DIR"
+run_cmd $SUDO mkdir -p "${SKILL_PATH}/bin"
+run_cmd $SUDO install -m 0755 "${TMP_DIR}/extract/ews_skilld" "${SKILL_PATH}/bin/ews_skilld"
+run_cmd $SUDO install -m 0755 "${TMP_DIR}/extract/ews_skillctl" "${SKILL_PATH}/bin/ews_skillctl"
+run_cmd $SUDO chown -R "${RUN_USER}:${RUN_GROUP}" "${SKILL_PATH}/bin"
+
+if [[ "$DRY_RUN" == "false" ]]; then
+  "${SKILL_PATH}/bin/ews_skilld" --check-ntlm
+else
+  printf '[dry-run] %q --check-ntlm\n' "${SKILL_PATH}/bin/ews_skilld"
+fi
+
+if [[ "$DRY_RUN" == "false" && ! -f "${SKILL_PATH}/.env" ]]; then
+  run_cmd $SUDO install -m 0600 "scripts/ews-skill.env.example" "${SKILL_PATH}/.env"
+  run_cmd $SUDO chown "${RUN_USER}:${RUN_GROUP}" "${SKILL_PATH}/.env"
+  printf 'Created %s/.env from template. Update credentials before starting service.\n' "$SKILL_PATH"
+fi
+
+run_cmd $SUDO mkdir -p "${SKILL_PATH}/openclaw"
+if [[ "$DRY_RUN" == "false" ]]; then
+  sed \
+    -e "s|__SKILL_PATH__|${SKILL_PATH}|g" \
+    -e "s|__SOCKET_PATH__|${SOCKET_PATH}|g" \
+    "openclaw/stdio-service.example.json" > "${TMP_DIR}/stdio-service.generated.json"
+  run_cmd $SUDO install -m 0644 "${TMP_DIR}/stdio-service.generated.json" "${SKILL_PATH}/openclaw/stdio-service.json"
+  run_cmd $SUDO chown "${RUN_USER}:${RUN_GROUP}" "${SKILL_PATH}/openclaw/stdio-service.json"
+else
+  printf '[dry-run] generate %s/openclaw/stdio-service.json from template\n' "$SKILL_PATH"
 fi
 
 if [[ "$NO_SYSTEMD" == "false" ]]; then
   if [[ ! -f "systemd/ews-skill-sync.service" ]]; then
-    printf 'Missing systemd unit file at systemd/ews-skill-sync.service\n' >&2
+    printf 'Missing systemd template: systemd/ews-skill-sync.service\n' >&2
     exit 1
   fi
 
-  run "awk -v user=\"${RUN_USER}\" -v group=\"${RUN_GROUP}\" '{ print; if ($0 == \"[Service]\") { print \"User=\" user; print \"Group=\" group; } }' \"systemd/ews-skill-sync.service\" > \"${TMP_DIR}/${SERVICE_NAME}\""
-  run "$SUDO install -m 0644 \"${TMP_DIR}/${SERVICE_NAME}\" \"/etc/systemd/system/${SERVICE_NAME}\""
-  run "$SUDO systemctl daemon-reload"
-  run "$SUDO systemctl enable --now \"${SERVICE_NAME}\""
-  run "$SUDO systemctl show -p User -p Group --no-pager \"${SERVICE_NAME}\""
-  run "$SUDO systemctl status --no-pager \"${SERVICE_NAME}\""
+  if [[ "$DRY_RUN" == "false" ]]; then
+    sed \
+      -e "s|__RUN_USER__|${RUN_USER}|g" \
+      -e "s|__RUN_GROUP__|${RUN_GROUP}|g" \
+      -e "s|__SKILL_PATH__|${SKILL_PATH}|g" \
+      -e "s|__SOCKET_PATH__|${SOCKET_PATH}|g" \
+      "systemd/ews-skill-sync.service" > "${TMP_DIR}/${SERVICE_NAME}"
+  else
+    printf '[dry-run] render systemd unit for %s\n' "$SERVICE_NAME"
+  fi
+
+  run_cmd $SUDO install -m 0644 "${TMP_DIR}/${SERVICE_NAME}" "/etc/systemd/system/${SERVICE_NAME}"
+  run_cmd $SUDO systemctl daemon-reload
+  run_cmd $SUDO systemctl enable --now "$SERVICE_NAME"
+  run_cmd $SUDO systemctl show -p User -p Group --no-pager "$SERVICE_NAME"
+  run_cmd $SUDO systemctl status --no-pager "$SERVICE_NAME"
 fi
 
 printf '\nInstall complete.\n'
+printf 'Skill path: %s\n' "$SKILL_PATH"
 printf 'Daemon user: %s\n' "$RUN_USER"
 printf 'Binaries:\n'
-printf '  %s/ews_skilld\n' "$INSTALL_DIR"
-printf '  %s/ews_skillctl\n' "$INSTALL_DIR"
+printf '  %s/bin/ews_skilld\n' "$SKILL_PATH"
+printf '  %s/bin/ews_skillctl\n' "$SKILL_PATH"
+printf 'OpenClaw config:\n'
+printf '  %s/openclaw/stdio-service.json\n' "$SKILL_PATH"
 printf 'Next:\n'
-printf '  1) Edit %s/.env\n' "$INSTALL_DIR"
+printf '  1) Edit %s/.env\n' "$SKILL_PATH"
 if [[ "$NO_SYSTEMD" == "false" ]]; then
   printf '  2) sudo systemctl restart %s\n' "$SERVICE_NAME"
   printf '  3) sudo journalctl -u %s -f\n' "$SERVICE_NAME"
 else
-  printf '  2) Start daemon: %s/ews_skilld --transport unix --socket /run/ews-skill/daemon.sock\n' "$INSTALL_DIR"
+  printf '  2) Start daemon: %s/bin/ews_skilld --transport unix --socket %s\n' "$SKILL_PATH" "$SOCKET_PATH"
 fi

@@ -2,7 +2,7 @@
 name: ews-skill
 description: Exchange EWS email tools with local cache, scheduled sync, and OpenClaw bridge.
 homepage: https://github.com/hexbyte42-bot/ews-skill
-metadata: {"clawdbot":{"emoji":"📧","requires":{"bins":["ews_skillctl","ews_skilld"]},"install":[{"id":"install-script","kind":"shell","command":"bash scripts/install.sh","label":"Install ews-skill daemon + bridge"}]}}
+metadata: {"clawdbot":{"emoji":"📧","requires":{"bins":["ews_skillctl","ews_skilld"]},"install":[{"id":"install-script","kind":"shell","command":"bash scripts/install.sh --skill-path \"$HOME/.openclaw/workspace/skill/ews-skill\"","label":"Install ews-skill into OpenClaw skill path"}]}}
 ---
 
 # EWS Skill
@@ -10,14 +10,21 @@ metadata: {"clawdbot":{"emoji":"📧","requires":{"bins":["ews_skillctl","ews_sk
 Use `ews_skillctl` (stdio bridge) with `ews_skilld` (daemon) to access Exchange email tools through a local SQLite cache.
 
 Quick start
-- `bash scripts/install.sh`
-- Edit `/opt/ews-skill/.env` with Exchange credentials
+- `bash scripts/install.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill"`
+- Edit `$HOME/.openclaw/workspace/skill/ews-skill/.env` with Exchange credentials
 - `sudo systemctl restart ews-skill-sync.service`
 - Call `email_health`, then `email_list`
 
 Install notes
-- Installer configures systemd daemon user as the invoking user by default.
-- Override with `bash scripts/install.sh --run-user <user>`.
+- `--skill-path` is required and must be absolute.
+- Binaries are installed into `<skill-path>/bin`.
+- Installer does a fresh install by removing old service/binaries before reinstall.
+- Systemd daemon user defaults to the invoking user; override with `--run-user <user>`.
+- Installer refuses to run daemon as `root`.
+
+Uninstall
+- `bash scripts/uninstall.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill"`
+- Optional purge (also remove `.env` + cache DB): `bash scripts/uninstall.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill" --purge`
 
 Common tasks
 - Read: `email_read` with `{"email_id":"<id>"}`

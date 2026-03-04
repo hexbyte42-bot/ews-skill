@@ -4,8 +4,8 @@ Use this checklist to validate production readiness for OpenClaw + `ews-skill`.
 
 ## 1) Pre-deploy
 
-- `ews_skilld` and `ews_skillctl` installed at `/opt/ews-skill/`
-- `/opt/ews-skill/.env` exists with required values:
+- `ews_skilld` and `ews_skillctl` installed at `<skill-path>/bin/`
+- `<skill-path>/.env` exists with required values:
   - `EWS_EMAIL`
   - `EWS_PASSWORD`
   - `EWS_AUTH_MODE=ntlm`
@@ -13,7 +13,7 @@ Use this checklist to validate production readiness for OpenClaw + `ews-skill`.
 - NTLM capability check passes:
 
 ```bash
-/opt/ews-skill/ews_skilld --check-ntlm
+<skill-path>/bin/ews_skilld --check-ntlm
 ```
 
 Expected: `NTLM_SUPPORTED=true`
@@ -42,7 +42,7 @@ journalctl -u ews-skill-sync.service -n 100 --no-pager
 
 ## 3) OpenClaw transport validation
 
-- OpenClaw command points to `/opt/ews-skill/ews_skillctl`
+- OpenClaw command points to `<skill-path>/bin/ews_skillctl`
 - OpenClaw env includes `EWS_SOCKET_PATH=/run/ews-skill/daemon.sock`
 
 JSON-RPC sanity checks:

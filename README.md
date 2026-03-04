@@ -13,47 +13,52 @@ EWS email skill for OpenClaw with Outlook-style local cache (SQLite), autodiscov
 
 ## Quick start
 
-There are two ways to obtain the daemon binary. After that, setup/run steps are the same.
+Use the installer with an OpenClaw skill path.
 
 ### One-command installer (recommended)
 
 From this repo checkout:
 
 ```bash
-bash scripts/install.sh
+SKILL_PATH="$HOME/.openclaw/workspace/skill/ews-skill"
+bash scripts/install.sh --skill-path "$SKILL_PATH"
 ```
 
 Useful flags:
 
 ```bash
-bash scripts/install.sh --version v0.1.7
-bash scripts/install.sh --install-dir /opt/ews-skill --no-systemd
+bash scripts/install.sh --skill-path "$SKILL_PATH" --version v0.1.9
+bash scripts/install.sh --skill-path "$SKILL_PATH" --no-systemd
 bash scripts/install.sh --run-user openclaw
-bash scripts/install.sh --dry-run
+bash scripts/install.sh --skill-path "$SKILL_PATH" --dry-run
 ```
 
 Installer behavior:
 
-- The systemd service is configured to run as the invoking user by default.
+- `--skill-path` is required and binaries are installed to `<skill-path>/bin`.
+- Installer removes old ews-skill service/binaries first, then performs a fresh install.
+- The systemd service runs as the invoking user by default.
 - Override explicitly with `--run-user <user>` when needed.
+- Installer refuses to install daemon as `root`.
 
-### Option A: build from source
+### Uninstall
+
+```bash
+bash scripts/uninstall.sh --skill-path "$SKILL_PATH"
+# also remove .env and cache DB
+bash scripts/uninstall.sh --skill-path "$SKILL_PATH" --purge
+```
+
+### Option A: build from source (manual)
 
 ```bash
 cargo build --release --bin ews_skilld --bin ews_skillctl
-sudo mkdir -p /opt/ews-skill
-sudo cp target/release/ews_skilld /opt/ews-skill/ews_skilld
-sudo cp target/release/ews_skillctl /opt/ews-skill/ews_skillctl
+mkdir -p "$SKILL_PATH/bin"
+cp target/release/ews_skilld "$SKILL_PATH/bin/ews_skilld"
+cp target/release/ews_skillctl "$SKILL_PATH/bin/ews_skillctl"
 ```
 
-Binary paths:
-
-```bash
-/opt/ews-skill/ews_skilld
-/opt/ews-skill/ews_skillctl
-```
-
-### Option B: use precompiled release binary
+### Option B: use precompiled release binary (manual)
 
 ```bash
 curl -L -o ews-skilld-linux-x86_64.tar.gz \
@@ -61,16 +66,16 @@ curl -L -o ews-skilld-linux-x86_64.tar.gz \
 curl -L -o ews-skilld-linux-x86_64.tar.gz.sha256 \
   https://github.com/hexbyte42-bot/ews-skill/releases/latest/download/ews-skilld-linux-x86_64.tar.gz.sha256
 sha256sum -c ews-skilld-linux-x86_64.tar.gz.sha256
-mkdir -p /opt/ews-skill
-tar -xzf ews-skilld-linux-x86_64.tar.gz -C /opt/ews-skill
-/opt/ews-skill/ews_skilld --check-ntlm
+mkdir -p "$SKILL_PATH"
+tar -xzf ews-skilld-linux-x86_64.tar.gz -C "$SKILL_PATH"
+"$SKILL_PATH/bin/ews_skilld" --check-ntlm
 ```
 
 Binary paths:
 
 ```bash
-/opt/ews-skill/ews_skilld
-/opt/ews-skill/ews_skillctl
+$SKILL_PATH/bin/ews_skilld
+$SKILL_PATH/bin/ews_skillctl
 ```
 
 ### Common setup/run steps (same for both options)
@@ -95,7 +100,7 @@ export EWS_RETRY_MAX_BACKOFF_MS=10000
 2. Run daemon manually (optional):
 
 ```bash
-/opt/ews-skill/ews_skilld
+$SKILL_PATH/bin/ews_skilld --transport unix --socket /run/ews-skill/daemon.sock
 ```
 
 3. Optional smoke test (source checkout only):
@@ -106,7 +111,7 @@ export EWS_RETRY_MAX_BACKOFF_MS=10000
 
 ### Use released binary with OpenClaw
 
-OpenClaw should run `/opt/ews-skill/ews_skillctl` (stdio bridge) and communicate with the
+OpenClaw should run `<skill-path>/bin/ews_skillctl` (stdio bridge) and communicate with the
 systemd-managed daemon socket.
 
 For maintainers who publish release binaries, see `docs/releasing.md`.
@@ -124,26 +129,16 @@ cargo run --release --bin ews_skilld
 
 ### Option B: run as systemd service
 
-Systemd setup is identical for source-build and release-binary installs because both use the same
-daemon path: `/opt/ews-skill/ews_skilld`.
+Systemd setup uses your chosen `<skill-path>` and generated unit values.
 
-1. Install files on server:
+1. Prepare files in skill path:
 
 ```bash
-sudo mkdir -p /opt/ews-skill
-
-# Source-build mode
-sudo rsync -av ./ /opt/ews-skill/
-cd /opt/ews-skill && cargo build --release --bin ews_skilld --bin ews_skillctl
-cp /opt/ews-skill/target/release/ews_skilld /opt/ews-skill/ews_skilld
-cp /opt/ews-skill/target/release/ews_skillctl /opt/ews-skill/ews_skillctl
-
-# OR release-binary mode
-# extract ews_skilld-linux-x86_64.tar.gz into /opt/ews-skill
-# (binary is already at /opt/ews-skill/ews_skilld)
+SKILL_PATH="$HOME/.openclaw/workspace/skill/ews-skill"
+bash scripts/install.sh --skill-path "$SKILL_PATH"
 ```
 
-2. Create `/opt/ews-skill/.env` with credentials:
+2. Create `<skill-path>/.env` with credentials:
 
 ```bash
 EWS_EMAIL=user@company.com
@@ -162,12 +157,10 @@ EWS_RETRY_MAX_BACKOFF_MS=10000
 # EWS_DAEMON_LOG_FILE=/var/log/ews_skilld.log
 ```
 
-3. Install and start service:
+3. Install and start service (done by installer):
 
 ```bash
-sudo cp systemd/ews-skill-sync.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now ews-skill-sync.service
+sudo systemctl restart ews-skill-sync.service
 sudo systemctl status ews-skill-sync.service
 ```
 
@@ -249,7 +242,7 @@ See `openclaw/stdio-service.example.json` for a ready-to-adapt process definitio
 Minimal launch command (OpenClaw):
 
 ```bash
-/opt/ews-skill/ews_skillctl
+$SKILL_PATH/bin/ews_skillctl
 ```
 
 Recommended startup handshake from OpenClaw:
