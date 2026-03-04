@@ -116,6 +116,36 @@ impl Repository {
             return;
         }
 
+        let mut email_to_save = email.clone();
+        let incoming_body_empty = email_to_save.body_text.trim().is_empty()
+            && email_to_save
+                .body_html
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .is_empty();
+
+        if incoming_body_empty {
+            if let Some(existing) = self.get_email(&email_to_save.id) {
+                let existing_has_body = !existing.body_text.trim().is_empty()
+                    || !existing
+                        .body_html
+                        .as_deref()
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty();
+                if existing_has_body {
+                    debug!(
+                        email_id = %email_to_save.id,
+                        subject = %email_to_save.subject,
+                        "preserving existing non-empty cached body"
+                    );
+                    email_to_save.body_text = existing.body_text;
+                    email_to_save.body_html = existing.body_html;
+                }
+            }
+        }
+
         let conn = self.db.connection();
         let conn = conn.lock();
 
@@ -123,22 +153,22 @@ impl Repository {
             r#"INSERT OR REPLACE INTO emails (id, change_key, folder_id, subject, sender_name, sender_email, to_recipients, cc_recipients, body_text, body_html, has_attachments, is_read, importance, datetime_received, datetime_sent, cached_at)
                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"#,
             params![
-                email.id,
-                email.change_key,
-                email.folder_id,
-                email.subject,
-                email.sender_name,
-                email.sender_email,
-                serde_json::to_string(&email.to_recipients).unwrap_or_default(),
-                serde_json::to_string(&email.cc_recipients).unwrap_or_default(),
-                email.body_text,
-                email.body_html,
-                email.has_attachments as i32,
-                email.is_read as i32,
-                email.importance,
-                email.datetime_received.map(|d| d.to_rfc3339()),
-                email.datetime_sent.map(|d| d.to_rfc3339()),
-                email.cached_at.to_rfc3339(),
+                email_to_save.id,
+                email_to_save.change_key,
+                email_to_save.folder_id,
+                email_to_save.subject,
+                email_to_save.sender_name,
+                email_to_save.sender_email,
+                serde_json::to_string(&email_to_save.to_recipients).unwrap_or_default(),
+                serde_json::to_string(&email_to_save.cc_recipients).unwrap_or_default(),
+                email_to_save.body_text,
+                email_to_save.body_html,
+                email_to_save.has_attachments as i32,
+                email_to_save.is_read as i32,
+                email_to_save.importance,
+                email_to_save.datetime_received.map(|d| d.to_rfc3339()),
+                email_to_save.datetime_sent.map(|d| d.to_rfc3339()),
+                email_to_save.cached_at.to_rfc3339(),
             ],
         ).ok();
     }

@@ -243,6 +243,7 @@ fn needs_enrichment(email: &crate::ews_client::Email) -> bool {
     email.sender.mailbox.is_none()
         || email.datetime_received.trim().is_empty()
         || email.importance.trim().is_empty()
+        || (email.body.value.trim().is_empty() && email.text_body.value.trim().is_empty())
 }
 
 impl Clone for SyncEngine {

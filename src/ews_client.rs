@@ -118,7 +118,10 @@ impl EwsClient {
         );
 
         let candidates = [
-            format!("https://autodiscover.{}/Autodiscover/Autodiscover.xml", domain),
+            format!(
+                "https://autodiscover.{}/Autodiscover/Autodiscover.xml",
+                domain
+            ),
             format!("https://{}/Autodiscover/Autodiscover.xml", domain),
         ];
 
@@ -157,10 +160,7 @@ impl EwsClient {
 
             if response.status < 200 || response.status >= 300 {
                 last_error = Some(format!("HTTP {}", response.status));
-                warn!(
-                    "autodiscover endpoint {} returned {}",
-                    url, response.status
-                );
+                warn!("autodiscover endpoint {} returned {}", url, response.status);
                 continue;
             }
 
@@ -255,7 +255,10 @@ impl EwsClient {
         Ok(response.response_messages.get_folder.folders.folder)
     }
 
-    pub async fn get_distinguished_folder(&self, distinguished_id: &str) -> Result<Folder, EwsError> {
+    pub async fn get_distinguished_folder(
+        &self,
+        distinguished_id: &str,
+    ) -> Result<Folder, EwsError> {
         let safe_id = escape_xml(distinguished_id);
         let body = format!(
             r#"<?xml version="1.0" encoding="utf-8"?>
@@ -326,7 +329,13 @@ impl EwsClient {
                 <soap:Body>
                     <GetItem xmlns="http://schemas.microsoft.com/exchange/services/2006/messages">
                         <ItemShape>
-                            <t:BaseShape>Default</t:BaseShape>
+                            <t:BaseShape>AllProperties</t:BaseShape>
+                            <t:BodyType>Best</t:BodyType>
+                            <t:FilterHtmlContent>false</t:FilterHtmlContent>
+                            <t:AdditionalProperties>
+                                <t:FieldURI FieldURI="item:Body"/>
+                                <t:FieldURI FieldURI="item:TextBody"/>
+                            </t:AdditionalProperties>
                         </ItemShape>
                         <ItemIds>
                             <t:ItemId Id="{}"/>
@@ -385,7 +394,12 @@ impl EwsClient {
         );
 
         let response: FindItemResponse = self.send_request("FindItem", body).await?;
-        Ok(response.response_messages.find_item.root_folder.items.into_vec())
+        Ok(response
+            .response_messages
+            .find_item
+            .root_folder
+            .items
+            .into_vec())
     }
 
     pub async fn send_email(
@@ -526,7 +540,14 @@ impl EwsClient {
         let xml = self.send_request_xml(body).await?;
 
         if let Ok(envelope) = quick_xml::de::from_str::<soap::Envelope<MoveItemResponse>>(&xml) {
-            if let Some(item_id) = envelope.body.response.response_messages.move_item.items.item_id {
+            if let Some(item_id) = envelope
+                .body
+                .response
+                .response_messages
+                .move_item
+                .items
+                .item_id
+            {
                 if !item_id.id.trim().is_empty() {
                     return Ok(item_id.id);
                 }
@@ -613,12 +634,7 @@ impl EwsClient {
         };
 
         let response = self
-            .post_xml_with_retry(
-                &self.ews_url,
-                body,
-                "application/xml",
-                auth,
-            )
+            .post_xml_with_retry(&self.ews_url, body, "application/xml", auth)
             .await?;
 
         if response.status < 200 || response.status >= 300 {
@@ -692,9 +708,8 @@ impl EwsClient {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| {
-            EwsError::HttpError("request failed after retries".to_string())
-        }))
+        Err(last_error
+            .unwrap_or_else(|| EwsError::HttpError("request failed after retries".to_string())))
     }
 
     async fn post_xml_with_auth(
@@ -968,7 +983,8 @@ fn authorization_header(
 }
 
 fn extract_ews_url_from_autodiscover(xml: &str) -> Option<String> {
-    extract_tag_value(xml, &["EwsUrl", "ExternalEwsUrl", "InternalEwsUrl"]).map(|v| normalize_ews_url(&v))
+    extract_tag_value(xml, &["EwsUrl", "ExternalEwsUrl", "InternalEwsUrl"])
+        .map(|v| normalize_ews_url(&v))
 }
 
 fn extract_redirect_url_from_autodiscover(xml: &str) -> Option<String> {
@@ -1384,6 +1400,8 @@ pub struct Email {
     pub datetime_sent: String,
     #[serde(rename = "Body", default)]
     pub body: BodyType,
+    #[serde(rename = "TextBody", default)]
+    pub text_body: BodyType,
     #[serde(rename = "HasAttachments", default)]
     pub has_attachments: bool,
     #[serde(rename = "IsRead", default)]
@@ -1405,6 +1423,7 @@ impl Default for Email {
             datetime_received: String::new(),
             datetime_sent: String::new(),
             body: BodyType::default(),
+            text_body: BodyType::default(),
             has_attachments: false,
             is_read: false,
             importance: "Normal".to_string(),
@@ -1429,7 +1448,7 @@ pub struct RecipientCollection {
 pub struct BodyType {
     #[serde(rename = "@BodyType", default)]
     pub body_type: String,
-    #[serde(rename = "#text", default)]
+    #[serde(rename = "$text", default)]
     pub value: String,
 }
 
