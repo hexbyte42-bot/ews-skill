@@ -7,6 +7,7 @@ INSTALL_DIR="/opt/ews-skill"
 SERVICE_NAME="ews-skill-sync.service"
 NO_SYSTEMD="false"
 DRY_RUN="false"
+RUN_USER=""
 
 usage() {
   cat <<'EOF'
@@ -16,6 +17,7 @@ Options:
   --version <tag>         Install a specific tag (example: v0.1.7). Default: latest
   --install-dir <path>    Install directory. Default: /opt/ews-skill
   --service-name <name>   Systemd unit name. Default: ews-skill-sync.service
+  --run-user <user>       Run daemon as this user (default: invoking user)
   --no-systemd            Skip systemd install/restart
   --dry-run               Print actions without changing system
   -h, --help              Show this help
@@ -51,6 +53,10 @@ while [[ $# -gt 0 ]]; do
       SERVICE_NAME="${2:-}"
       shift 2
       ;;
+    --run-user)
+      RUN_USER="${2:-}"
+      shift 2
+      ;;
     --no-systemd)
       NO_SYSTEMD="true"
       shift
@@ -75,12 +81,29 @@ need_cmd curl
 need_cmd tar
 need_cmd sha256sum
 need_cmd install
+need_cmd id
+need_cmd awk
 
 if [[ "$EUID" -ne 0 ]]; then
   SUDO="sudo"
 else
   SUDO=""
 fi
+
+if [[ -z "$RUN_USER" ]]; then
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    RUN_USER="$SUDO_USER"
+  else
+    RUN_USER="$(id -un)"
+  fi
+fi
+
+if ! id "$RUN_USER" >/dev/null 2>&1; then
+  printf 'Run user does not exist: %s\n' "$RUN_USER" >&2
+  exit 1
+fi
+
+RUN_GROUP="$(id -gn "$RUN_USER")"
 
 if [[ "$VERSION" == "latest" ]]; then
   BASE_URL="https://github.com/${REPO}/releases/latest/download"
@@ -130,6 +153,7 @@ fi
 
 if [[ "$DRY_RUN" == "false" && ! -f "${INSTALL_DIR}/.env" ]]; then
   run "$SUDO install -m 0600 \"scripts/ews-skill.env.example\" \"${INSTALL_DIR}/.env\""
+  run "$SUDO chown \"${RUN_USER}:${RUN_GROUP}\" \"${INSTALL_DIR}/.env\""
   printf 'Created %s/.env from template. Update credentials before starting service.\n' "$INSTALL_DIR"
 fi
 
@@ -139,13 +163,16 @@ if [[ "$NO_SYSTEMD" == "false" ]]; then
     exit 1
   fi
 
-  run "$SUDO install -m 0644 \"systemd/ews-skill-sync.service\" \"/etc/systemd/system/${SERVICE_NAME}\""
+  run "awk -v user=\"${RUN_USER}\" -v group=\"${RUN_GROUP}\" '{ print; if ($0 == \"[Service]\") { print \"User=\" user; print \"Group=\" group; } }' \"systemd/ews-skill-sync.service\" > \"${TMP_DIR}/${SERVICE_NAME}\""
+  run "$SUDO install -m 0644 \"${TMP_DIR}/${SERVICE_NAME}\" \"/etc/systemd/system/${SERVICE_NAME}\""
   run "$SUDO systemctl daemon-reload"
   run "$SUDO systemctl enable --now \"${SERVICE_NAME}\""
+  run "$SUDO systemctl show -p User -p Group --no-pager \"${SERVICE_NAME}\""
   run "$SUDO systemctl status --no-pager \"${SERVICE_NAME}\""
 fi
 
 printf '\nInstall complete.\n'
+printf 'Daemon user: %s\n' "$RUN_USER"
 printf 'Binaries:\n'
 printf '  %s/ews_skilld\n' "$INSTALL_DIR"
 printf '  %s/ews_skillctl\n' "$INSTALL_DIR"

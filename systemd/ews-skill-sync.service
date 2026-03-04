@@ -4,6 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# User/Group are injected by scripts/install.sh during install.
 Type=simple
 WorkingDirectory=/opt/ews-skill
 EnvironmentFile=/opt/ews-skill/.env

@@ -15,6 +15,10 @@ Quick start
 - `sudo systemctl restart ews-skill-sync.service`
 - Call `email_health`, then `email_list`
 
+Install notes
+- Installer configures systemd daemon user as the invoking user by default.
+- Override with `bash scripts/install.sh --run-user <user>`.
+
 Common tasks
 - Read: `email_read` with `{"email_id":"<id>"}`
 - Search: `email_search` with `{"query":"keyword","limit":20}`

@@ -28,8 +28,14 @@ Useful flags:
 ```bash
 bash scripts/install.sh --version v0.1.7
 bash scripts/install.sh --install-dir /opt/ews-skill --no-systemd
+bash scripts/install.sh --run-user openclaw
 bash scripts/install.sh --dry-run
 ```
+
+Installer behavior:
+
+- The systemd service is configured to run as the invoking user by default.
+- Override explicitly with `--run-user <user>` when needed.
 
 ### Option A: build from source
 
