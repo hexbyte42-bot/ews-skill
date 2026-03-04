@@ -15,6 +15,22 @@ EWS email skill for OpenClaw with Outlook-style local cache (SQLite), autodiscov
 
 There are two ways to obtain the daemon binary. After that, setup/run steps are the same.
 
+### One-command installer (recommended)
+
+From this repo checkout:
+
+```bash
+bash scripts/install.sh
+```
+
+Useful flags:
+
+```bash
+bash scripts/install.sh --version v0.1.7
+bash scripts/install.sh --install-dir /opt/ews-skill --no-systemd
+bash scripts/install.sh --dry-run
+```
+
 ### Option A: build from source
 
 ```bash
