@@ -33,6 +33,8 @@ impl EwsSkill {
             .try_init();
 
         let db = Database::new(&config.cache.path).map_err(|e| e.to_string())?;
+        db.ensure_account_scope(&config.exchange.email)
+            .map_err(|e| e.to_string())?;
 
         let repository = Repository::new(db);
 

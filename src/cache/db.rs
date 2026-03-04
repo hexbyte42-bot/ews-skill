@@ -63,6 +63,11 @@ impl Database {
                 sync_state TEXT NOT NULL,
                 last_sync_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             
             CREATE INDEX IF NOT EXISTS idx_emails_folder ON emails(folder_id);
             CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(datetime_received);
@@ -74,6 +79,40 @@ impl Database {
             DELETE FROM folders WHERE id = '' OR id IS NULL;
             DELETE FROM sync_states WHERE folder_id = '' OR folder_id IS NULL;
         "#,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn ensure_account_scope(&self, account_email: &str) -> SqlResult<()> {
+        if account_email.trim().is_empty() {
+            return Ok(());
+        }
+
+        let conn = self.conn.lock();
+        let existing: Option<String> = conn
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'account_email'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        if let Some(prev) = existing {
+            if prev != account_email {
+                conn.execute("DELETE FROM emails", [])?;
+                conn.execute("DELETE FROM folders", [])?;
+                conn.execute("DELETE FROM sync_states", [])?;
+                info!(
+                    "Account changed ({} -> {}), cleared cached mailbox data",
+                    prev, account_email
+                );
+            }
+        }
+
+        conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('account_email', ?1)",
+            [account_email],
         )?;
 
         Ok(())

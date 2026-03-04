@@ -162,6 +162,8 @@ Primary integration mode is external process:
 - systemd runs `ews_skilld` (Exchange sync + cache) over Unix socket
 - OpenClaw runs `ews_skillctl` (stdio bridge) and forwards JSON-RPC to daemon socket
 
+For production rollout and validation, use `docs/openclaw-ops-checklist.md`.
+
 Why this is a good fit for OpenClaw:
 
 - Most read operations are served from local cache for lower latency.

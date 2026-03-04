@@ -402,7 +402,10 @@ impl EwsClient {
                     <t:RequestServerVersion Version="Exchange2016"/>
                 </soap:Header>
                 <soap:Body>
-                    <CreateItem xmlns="http://schemas.microsoft.com/exchange/services/2006/messages" SendInvitationsToNone="true">
+                    <CreateItem xmlns="http://schemas.microsoft.com/exchange/services/2006/messages" MessageDisposition="SendAndSaveCopy">
+                        <SavedItemFolderId>
+                            <t:DistinguishedFolderId Id="sentitems"/>
+                        </SavedItemFolderId>
                         <Items>
                             <t:Message>
                                 <t:Subject>{}</t:Subject>
@@ -422,18 +425,38 @@ impl EwsClient {
             escape_xml(to)
         );
 
-        let response: CreateItemResponse = self.send_request("CreateItem", body_xml).await?;
-        response
-            .response_messages
-            .create_item
-            .items
-            .messages
-            .into_iter()
-            .next()
-            .map(|m| m.item_id.id)
-            .ok_or_else(|| {
-                EwsError::NotFound("item id not found in CreateItem response".to_string())
-            })
+        let xml = self.send_request_xml(body_xml).await?;
+
+        if let Ok(envelope) = quick_xml::de::from_str::<soap::Envelope<CreateItemResponse>>(&xml) {
+            if let Some(id) = envelope
+                .body
+                .response
+                .response_messages
+                .create_item
+                .items
+                .messages
+                .into_iter()
+                .next()
+                .map(|m| m.item_id.id)
+                .filter(|id| !id.trim().is_empty())
+            {
+                return Ok(id);
+            }
+        }
+
+        if let Some(id) = extract_first_item_id_from_xml(&xml) {
+            return Ok(id);
+        }
+
+        if xml_indicates_success(&xml) {
+            warn!("CreateItem succeeded without item id; returning synthetic id");
+            return Ok("sent-no-itemid".to_string());
+        }
+
+        debug_response_excerpt("CreateItem", &xml);
+        Err(EwsError::NotFound(
+            "item id not found in CreateItem response".to_string(),
+        ))
     }
 
     pub async fn mark_read(&self, item_id: &str, is_read: bool) -> Result<(), EwsError> {
@@ -500,33 +523,41 @@ impl EwsClient {
             safe_destination_folder, safe_item_id
         );
 
-        let response: MoveItemResponse = self.send_request("MoveItem", body).await?;
-        if let Some(item_id) = response.response_messages.move_item.items.item_id {
-            return Ok(item_id.id);
+        let xml = self.send_request_xml(body).await?;
+
+        if let Ok(envelope) = quick_xml::de::from_str::<soap::Envelope<MoveItemResponse>>(&xml) {
+            if let Some(item_id) = envelope.body.response.response_messages.move_item.items.item_id {
+                if !item_id.id.trim().is_empty() {
+                    return Ok(item_id.id);
+                }
+            }
+
+            if let Some(first) = envelope
+                .body
+                .response
+                .response_messages
+                .move_item
+                .items
+                .messages
+                .into_iter()
+                .next()
+                .map(|m| m.item_id.id)
+                .filter(|id| !id.trim().is_empty())
+            {
+                return Ok(first);
+            }
         }
 
-        if let Some(first) = response
-            .response_messages
-            .move_item
-            .items
-            .messages
-            .into_iter()
-            .next()
-        {
-            return Ok(first.item_id.id);
+        if let Some(id) = extract_first_item_id_from_xml(&xml) {
+            return Ok(id);
         }
 
-        if let Some(first) = response
-            .response_messages
-            .move_item
-            .items
-            .items
-            .into_iter()
-            .next()
-        {
-            return Ok(first.item_id.id);
+        if xml_indicates_success(&xml) {
+            warn!("MoveItem succeeded without returned item id; returning original id");
+            return Ok(item_id.to_string());
         }
 
+        debug_response_excerpt("MoveItem", &xml);
         Err(EwsError::NotFound(
             "item id not found in MoveItem response".to_string(),
         ))
@@ -842,6 +873,49 @@ fn backoff_delay(attempt: u32, base_ms: u64, max_backoff_ms: u64) -> Duration {
     let capped = min(exp, max_backoff_ms);
     let jitter = ((attempt as u64).saturating_mul(137)) % 251;
     Duration::from_millis(capped.saturating_add(jitter))
+}
+
+fn extract_first_item_id_from_xml(xml: &str) -> Option<String> {
+    let mut reader = Reader::from_str(xml);
+    reader.trim_text(true);
+
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                if local_name(e.name().as_ref()) == "ItemId" {
+                    for attr in e.attributes().flatten() {
+                        if local_name(attr.key.as_ref()) == "Id" {
+                            let v = String::from_utf8_lossy(attr.value.as_ref()).to_string();
+                            if !v.trim().is_empty() {
+                                return Some(v);
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    None
+}
+
+fn xml_indicates_success(xml: &str) -> bool {
+    (xml.contains("ResponseClass=\"Success\"") || xml.contains("ResponseClass='Success'"))
+        && xml.contains("NoError")
+}
+
+fn debug_response_excerpt(op: &str, xml: &str) {
+    let start = xml
+        .find("ResponseMessages")
+        .or_else(|| xml.find("ResponseClass"))
+        .unwrap_or(0);
+    let excerpt: String = xml.chars().skip(start).take(1400).collect();
+    warn!("{} response excerpt: {}", op, excerpt);
 }
 
 pub fn distinguished_folder_id_from_spec(spec: &str) -> Option<&'static str> {
