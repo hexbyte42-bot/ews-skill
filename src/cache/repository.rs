@@ -2,7 +2,7 @@ use crate::cache::db::Database;
 use crate::cache::models::{CachedEmail, CachedFolder, SyncState};
 use chrono::Utc;
 use rusqlite::{params, Row};
-use tracing::error;
+use tracing::{debug, error};
 
 pub struct Repository {
     db: Database,
@@ -91,11 +91,20 @@ impl Repository {
         let conn = self.db.connection();
         let conn = conn.lock();
 
-        conn.query_row(
-            "SELECT id, change_key, folder_id, subject, sender_name, sender_email, to_recipients, cc_recipients, body_text, body_html, has_attachments, is_read, importance, datetime_received, datetime_sent, cached_at FROM emails WHERE id = ?1",
-            params![email_id],
-            |row| Self::row_to_email(row),
-        ).ok()
+        for candidate in email_id_candidates(email_id) {
+            if let Ok(email) = conn.query_row(
+                "SELECT id, change_key, folder_id, subject, sender_name, sender_email, to_recipients, cc_recipients, body_text, body_html, has_attachments, is_read, importance, datetime_received, datetime_sent, cached_at FROM emails WHERE id = ?1",
+                params![candidate],
+                Self::row_to_email,
+            ) {
+                if candidate != email_id {
+                    debug!(requested_id = email_id, matched_id = candidate, "resolved email id variant from cache");
+                }
+                return Some(email);
+            }
+        }
+
+        None
     }
 
     pub fn save_email(&self, email: &CachedEmail) {
@@ -138,8 +147,10 @@ impl Repository {
         let conn = self.db.connection();
         let conn = conn.lock();
 
-        conn.execute("DELETE FROM emails WHERE id = ?1", params![email_id])
-            .ok();
+        for candidate in email_id_candidates(email_id) {
+            conn.execute("DELETE FROM emails WHERE id = ?1", params![candidate])
+                .ok();
+        }
     }
 
     pub fn list_emails(&self, folder_id: &str, limit: i32, unread_only: bool) -> Vec<CachedEmail> {
@@ -214,22 +225,26 @@ impl Repository {
         let conn = self.db.connection();
         let conn = conn.lock();
 
-        conn.execute(
-            "UPDATE emails SET is_read = ?1 WHERE id = ?2",
-            params![is_read as i32, email_id],
-        )
-        .ok();
+        for candidate in email_id_candidates(email_id) {
+            conn.execute(
+                "UPDATE emails SET is_read = ?1 WHERE id = ?2",
+                params![is_read as i32, candidate],
+            )
+            .ok();
+        }
     }
 
     pub fn move_email(&self, email_id: &str, new_folder_id: &str) {
         let conn = self.db.connection();
         let conn = conn.lock();
 
-        conn.execute(
-            "UPDATE emails SET folder_id = ?1 WHERE id = ?2",
-            params![new_folder_id, email_id],
-        )
-        .ok();
+        for candidate in email_id_candidates(email_id) {
+            conn.execute(
+                "UPDATE emails SET folder_id = ?1 WHERE id = ?2",
+                params![new_folder_id, candidate],
+            )
+            .ok();
+        }
     }
 
     pub fn get_sync_state(&self, folder_id: &str) -> Option<SyncState> {
@@ -359,5 +374,75 @@ impl Clone for Repository {
         Self {
             db: self.db.clone(),
         }
+    }
+}
+
+fn email_id_candidates(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    push_unique(&mut out, raw.to_string());
+
+    let trimmed = raw.trim();
+    push_unique(&mut out, trimmed.to_string());
+
+    let unwrapped = trim_wrappers(trimmed);
+    push_unique(&mut out, unwrapped.to_string());
+
+    if trimmed.contains(' ') {
+        let plus_normalized = trimmed.replace(' ', "+");
+        push_unique(&mut out, plus_normalized.clone());
+        push_unique(&mut out, trim_wrappers(&plus_normalized).to_string());
+    }
+
+    out
+}
+
+fn trim_wrappers(value: &str) -> &str {
+    if value.len() < 2 {
+        return value;
+    }
+
+    let mut chars = value.chars();
+    let first = match chars.next() {
+        Some(ch) => ch,
+        None => return value,
+    };
+    let last = match value.chars().last() {
+        Some(ch) => ch,
+        None => return value,
+    };
+
+    let wrapped = matches!(
+        (first, last),
+        ('"', '"') | ('\'', '\'') | ('`', '`') | ('<', '>') | ('(', ')') | ('[', ']')
+    );
+
+    if wrapped {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
+}
+
+fn push_unique(out: &mut Vec<String>, value: String) {
+    if !value.is_empty() && !out.iter().any(|v| v == &value) {
+        out.push(value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::email_id_candidates;
+
+    #[test]
+    fn email_id_candidates_include_trimmed_and_unwrapped() {
+        let ids = email_id_candidates("  \"AAMkABC==\"  ");
+        assert!(ids.iter().any(|v| v == "\"AAMkABC==\""));
+        assert!(ids.iter().any(|v| v == "AAMkABC=="));
+    }
+
+    #[test]
+    fn email_id_candidates_handle_plus_as_space() {
+        let ids = email_id_candidates("AAMkA C+DE=");
+        assert!(ids.iter().any(|v| v == "AAMkA+C+DE="));
     }
 }

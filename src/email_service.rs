@@ -93,14 +93,20 @@ impl EmailService {
     }
 
     pub async fn mark_read(&self, email_id: &str, is_read: bool) -> Result<(), String> {
-        self.repository.mark_read(email_id, is_read);
+        let resolved_email_id = self
+            .repository
+            .get_email(email_id)
+            .map(|e| e.id)
+            .unwrap_or_else(|| email_id.to_string());
+
+        self.repository.mark_read(&resolved_email_id, is_read);
 
         self.sync_engine
             .get_client()
-            .mark_read(email_id, is_read)
+            .mark_read(&resolved_email_id, is_read)
             .await
             .map_err(|e| {
-                self.repository.mark_read(email_id, !is_read);
+                self.repository.mark_read(&resolved_email_id, !is_read);
                 e.to_string()
             })
     }
@@ -111,34 +117,41 @@ impl EmailService {
             .get_folder_by_name(destination_folder)
             .ok_or_else(|| format!("Folder not found: {}", destination_folder))?;
 
-        let old_folder = self
+        let email = self
             .repository
             .get_email(email_id)
-            .map(|e| e.folder_id)
             .ok_or_else(|| format!("Email not found: {}", email_id))?;
+        let resolved_email_id = email.id;
+        let old_folder = email.folder_id;
 
-        self.repository.move_email(email_id, &folder.id);
+        self.repository.move_email(&resolved_email_id, &folder.id);
 
         match self
             .sync_engine
             .get_client()
-            .move_item(email_id, &folder.id)
+            .move_item(&resolved_email_id, &folder.id)
             .await
         {
             Ok(_) => Ok(()),
             Err(e) => {
-                self.repository.move_email(email_id, &old_folder);
+                self.repository.move_email(&resolved_email_id, &old_folder);
                 Err(e.to_string())
             }
         }
     }
 
     pub async fn delete_email(&self, email_id: &str) -> Result<(), String> {
-        self.repository.delete_email(email_id);
+        let resolved_email_id = self
+            .repository
+            .get_email(email_id)
+            .map(|e| e.id)
+            .unwrap_or_else(|| email_id.to_string());
+
+        self.repository.delete_email(&resolved_email_id);
 
         self.sync_engine
             .get_client()
-            .delete_item(email_id)
+            .delete_item(&resolved_email_id)
             .await
             .map_err(|e| {
                 error!("Failed to delete email from server: {}", e);
