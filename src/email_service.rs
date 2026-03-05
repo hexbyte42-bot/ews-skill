@@ -140,7 +140,7 @@ impl EmailService {
         }
     }
 
-    pub async fn delete_email(&self, email_id: &str) -> Result<(), String> {
+    pub async fn delete_email(&self, email_id: &str, skip_trash: bool) -> Result<(), String> {
         let resolved_email_id = self
             .repository
             .get_email(email_id)
@@ -151,7 +151,7 @@ impl EmailService {
 
         self.sync_engine
             .get_client()
-            .delete_item(&resolved_email_id)
+            .delete_item(&resolved_email_id, skip_trash)
             .await
             .map_err(|e| {
                 error!("Failed to delete email from server: {}", e);

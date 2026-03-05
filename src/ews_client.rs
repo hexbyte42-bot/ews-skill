@@ -584,8 +584,13 @@ impl EwsClient {
         ))
     }
 
-    pub async fn delete_item(&self, item_id: &str) -> Result<(), EwsError> {
+    pub async fn delete_item(&self, item_id: &str, skip_trash: bool) -> Result<(), EwsError> {
         let safe_item_id = escape_xml(item_id);
+        let delete_type = if skip_trash {
+            "SoftDelete"
+        } else {
+            "MoveToDeletedItems"
+        };
         let body = format!(
             r#"<?xml version="1.0" encoding="utf-8"?>
             <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
@@ -594,14 +599,14 @@ impl EwsClient {
                     <t:RequestServerVersion Version="Exchange2016"/>
                 </soap:Header>
                 <soap:Body>
-                    <DeleteItem xmlns="http://schemas.microsoft.com/exchange/services/2006/messages" DeleteType="SoftDelete">
+                    <DeleteItem xmlns="http://schemas.microsoft.com/exchange/services/2006/messages" DeleteType="{}">
                         <ItemIds>
                             <t:ItemId Id="{}"/>
                         </ItemIds>
                     </DeleteItem>
                 </soap:Body>
             </soap:Envelope>"#,
-            safe_item_id
+            delete_type, safe_item_id
         );
 
         self.send_request::<()>("DeleteItem", body).await?;

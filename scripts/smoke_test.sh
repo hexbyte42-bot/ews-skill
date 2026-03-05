@@ -29,12 +29,19 @@ cargo run --example smoke_test -- --folder "$FOLDER" --limit "$LIMIT"
 
 if [[ "${SMOKE_DO_WRITE:-false}" == "true" ]]; then
   if [[ -z "${SMOKE_SEND_TO:-}" ]]; then
-    echo "SMOKE_DO_WRITE=true requires SMOKE_SEND_TO"
-    exit 2
+    export SMOKE_SEND_TO="$EWS_EMAIL"
+    echo "SMOKE_SEND_TO not set, defaulting to EWS_EMAIL"
   fi
 
   echo "Running write smoke test (send email)..."
-  cargo run --example smoke_test -- --folder "$FOLDER" --limit "$LIMIT" --do-write --send-to "$SMOKE_SEND_TO"
+  ARGS=(--folder "$FOLDER" --limit "$LIMIT" --do-write --send-to "$SMOKE_SEND_TO")
+
+  if [[ "${SMOKE_TEST_DELETE_MODES:-false}" == "true" ]]; then
+    echo "Enabling delete mode behavior check (default delete vs skip_trash=true)..."
+    ARGS+=(--test-delete-modes)
+  fi
+
+  cargo run --example smoke_test -- "${ARGS[@]}"
 fi
 
 echo "Smoke test finished."

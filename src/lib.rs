@@ -154,9 +154,9 @@ impl EwsSkill {
         }
     }
 
-    pub fn delete(&self, email_id: String) -> skill::ToolResult {
+    pub fn delete(&self, email_id: String, skip_trash: bool) -> skill::ToolResult {
         match self.email_skill.lock() {
-            Ok(skill) => skill.delete_email(email_id),
+            Ok(skill) => skill.delete_email(email_id, skip_trash),
             Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
@@ -206,7 +206,9 @@ impl EwsSkill {
                 let email_id = match args.get("email_id").and_then(|v| v.as_str()) {
                     Some(v) => v.to_string(),
                     None => {
-                        return skill::ToolResult::err("missing required argument: email_id".to_string())
+                        return skill::ToolResult::err(
+                            "missing required argument: email_id".to_string(),
+                        )
                     }
                 };
                 self.read_email(email_id)
@@ -215,7 +217,9 @@ impl EwsSkill {
                 let query = match args.get("query").and_then(|v| v.as_str()) {
                     Some(v) => v.to_string(),
                     None => {
-                        return skill::ToolResult::err("missing required argument: query".to_string())
+                        return skill::ToolResult::err(
+                            "missing required argument: query".to_string(),
+                        )
                     }
                 };
                 let limit = args
@@ -239,13 +243,17 @@ impl EwsSkill {
                 let email_id = match args.get("email_id").and_then(|v| v.as_str()) {
                     Some(v) => v.to_string(),
                     None => {
-                        return skill::ToolResult::err("missing required argument: email_id".to_string())
+                        return skill::ToolResult::err(
+                            "missing required argument: email_id".to_string(),
+                        )
                     }
                 };
                 let is_read = match args.get("is_read").and_then(|v| v.as_bool()) {
                     Some(v) => v,
                     None => {
-                        return skill::ToolResult::err("missing required argument: is_read".to_string())
+                        return skill::ToolResult::err(
+                            "missing required argument: is_read".to_string(),
+                        )
                     }
                 };
                 self.mark_read(email_id, is_read)
@@ -253,18 +261,24 @@ impl EwsSkill {
             "email_send" => {
                 let to = match args.get("to").and_then(|v| v.as_str()) {
                     Some(v) => v.to_string(),
-                    None => return skill::ToolResult::err("missing required argument: to".to_string()),
+                    None => {
+                        return skill::ToolResult::err("missing required argument: to".to_string())
+                    }
                 };
                 let subject = match args.get("subject").and_then(|v| v.as_str()) {
                     Some(v) => v.to_string(),
                     None => {
-                        return skill::ToolResult::err("missing required argument: subject".to_string())
+                        return skill::ToolResult::err(
+                            "missing required argument: subject".to_string(),
+                        )
                     }
                 };
                 let body = match args.get("body").and_then(|v| v.as_str()) {
                     Some(v) => v.to_string(),
                     None => {
-                        return skill::ToolResult::err("missing required argument: body".to_string())
+                        return skill::ToolResult::err(
+                            "missing required argument: body".to_string(),
+                        )
                     }
                 };
                 self.send(to, subject, body)
@@ -273,7 +287,9 @@ impl EwsSkill {
                 let email_id = match args.get("email_id").and_then(|v| v.as_str()) {
                     Some(v) => v.to_string(),
                     None => {
-                        return skill::ToolResult::err("missing required argument: email_id".to_string())
+                        return skill::ToolResult::err(
+                            "missing required argument: email_id".to_string(),
+                        )
                     }
                 };
                 let destination_folder =
@@ -291,17 +307,25 @@ impl EwsSkill {
                 let email_id = match args.get("email_id").and_then(|v| v.as_str()) {
                     Some(v) => v.to_string(),
                     None => {
-                        return skill::ToolResult::err("missing required argument: email_id".to_string())
+                        return skill::ToolResult::err(
+                            "missing required argument: email_id".to_string(),
+                        )
                     }
                 };
-                self.delete(email_id)
+                let skip_trash = args
+                    .get("skip_trash")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                self.delete(email_id, skip_trash)
             }
             "email_sync_now" => self.sync(),
             "email_add_folder" => {
                 let folder_name = match args.get("folder_name").and_then(|v| v.as_str()) {
                     Some(v) => v.to_string(),
                     None => {
-                        return skill::ToolResult::err("missing required argument: folder_name".to_string())
+                        return skill::ToolResult::err(
+                            "missing required argument: folder_name".to_string(),
+                        )
                     }
                 };
                 self.add_folder(folder_name)

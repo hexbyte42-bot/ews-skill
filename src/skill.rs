@@ -186,8 +186,11 @@ impl EmailSkill {
         }
     }
 
-    pub fn delete_email(&self, email_id: String) -> ToolResult {
-        match self.runtime.block_on(self.service.delete_email(&email_id)) {
+    pub fn delete_email(&self, email_id: String, skip_trash: bool) -> ToolResult {
+        match self
+            .runtime
+            .block_on(self.service.delete_email(&email_id, skip_trash))
+        {
             Ok(_) => ToolResult::ok(json!({ "message": "Email deleted" })),
             Err(e) => ToolResult::err(e),
         }
@@ -372,6 +375,10 @@ impl EmailSkill {
                         "email_id": {
                             "type": "string",
                             "description": "The email ID"
+                        },
+                        "skip_trash": {
+                            "type": "boolean",
+                            "description": "If true, skip Deleted Items and perform soft delete (default: false)"
                         }
                     },
                     "required": ["email_id"]

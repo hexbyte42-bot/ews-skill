@@ -41,6 +41,34 @@ Installer behavior:
 - Override explicitly with `--run-user <user>` when needed.
 - Installer refuses to install daemon as `root`.
 
+### Upgrade
+
+Upgrade in place (keeps existing `.env` and cache DB):
+
+```bash
+bash scripts/install.sh --skill-path "$SKILL_PATH"
+```
+
+Upgrade to a pinned release:
+
+```bash
+bash scripts/install.sh --skill-path "$SKILL_PATH" --version vX.Y.Z
+```
+
+Post-upgrade checks:
+
+```bash
+sudo systemctl status ews-skill-sync.service
+```
+
+Then run OpenClaw startup probes: `tools.list` and `health.get`.
+
+Rollback (reinstall previous release):
+
+```bash
+bash scripts/install.sh --skill-path "$SKILL_PATH" --version <previous-tag>
+```
+
 ### Uninstall
 
 ```bash
@@ -107,6 +135,13 @@ $SKILL_PATH/bin/ews_skilld --transport unix --socket /run/ews-skill/daemon.sock
 
 ```bash
 ./scripts/smoke_test.sh
+
+# Optional write-path checks
+SMOKE_DO_WRITE=true ./scripts/smoke_test.sh
+
+# Optional delete behavior check:
+# default delete => Deleted Items, skip_trash=true => SoftDelete
+SMOKE_DO_WRITE=true SMOKE_TEST_DELETE_MODES=true ./scripts/smoke_test.sh
 ```
 
 ### Use released binary with OpenClaw
@@ -269,6 +304,11 @@ If you are not using OpenClaw external process mode, the crate still exposes `Ew
 - `email_delete`
 - `email_sync_now`
 - `email_add_folder`
+
+`email_delete` behavior:
+
+- default: move to `Deleted Items`
+- optional `skip_trash=true`: perform Exchange `SoftDelete`
 
 ## Read cached email data directly (SQLite)
 

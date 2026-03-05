@@ -22,6 +22,13 @@ Install notes
 - Systemd daemon user defaults to the invoking user; override with `--run-user <user>`.
 - Installer refuses to run daemon as `root`.
 
+Upgrade
+- Latest: `bash scripts/install.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill"`
+- Pinned: `bash scripts/install.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill" --version vX.Y.Z`
+- Existing `<skill-path>/.env` and cache DB are preserved during upgrade.
+- Verify after upgrade: `sudo systemctl status ews-skill-sync.service`, then `tools.list` and `health.get`.
+- Rollback: reinstall previous tag with `--version <previous-tag>`.
+
 Uninstall
 - `bash scripts/uninstall.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill"`
 - Optional purge (also remove `.env` + cache DB): `bash scripts/uninstall.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill" --purge`
@@ -40,8 +47,8 @@ Data semantics
   - `body_text`: plain text (derived from HTML or from `TextBody` fallback)
 
 Delete behavior (current)
-- `email_delete` uses Exchange `SoftDelete`.
-- Deleted messages do not move to mailbox `Deleted Items`; they go to Exchange recoverable/deletions area.
+- Default: `email_delete` moves messages to `Deleted Items` (Outlook-style behavior).
+- Optional: set `skip_trash=true` to bypass `Deleted Items` and use Exchange `SoftDelete`.
 
 Notes
 - NTLM is required for this deployment profile.

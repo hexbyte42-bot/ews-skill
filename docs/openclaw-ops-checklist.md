@@ -66,7 +66,8 @@ JSON-RPC sanity checks:
 - `email_send` succeeds
 - Sent copy appears in `sentitems` after `email_sync_now`
 - `email_move` succeeds (for example `sentitems -> inbox`)
-- `email_delete` succeeds for disposable test message
+- `email_delete` default moves disposable test message to `Deleted Items`
+- `email_delete` with `skip_trash=true` bypasses `Deleted Items`
 
 ## 6) Resilience checks
 
