@@ -166,7 +166,16 @@ fn main() {
     let unread = skill.get_unread(Some(folder.clone()), Some(limit));
     print_result("get_unread", &unread);
 
-    let search = skill.search("test".to_string(), Some(5));
+    let search = skill.search(
+        Some("test".to_string()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(5),
+        Some(true),
+    );
     print_result("search('test')", &search);
 
     if do_write {

@@ -16,7 +16,7 @@ Usage: scripts/install.sh --skill-path <absolute-path> [options]
 
 Options:
   --skill-path <path>     OpenClaw skill root path (required)
-  --version <tag>         Install a specific tag (example: v0.1.9). Default: latest
+  --version <tag>         Install a specific tag (example: vX.Y.Z). Default: latest
   --service-name <name>   Systemd unit name. Default: ews-skill-sync.service
   --run-user <user>       Run daemon as this user (default: invoking user)
   --socket-path <path>    Daemon unix socket path. Default: /run/ews-skill/daemon.sock
@@ -210,18 +210,6 @@ if [[ "$DRY_RUN" == "false" && ! -f "${SKILL_PATH}/.env" ]]; then
   printf 'Created %s/.env from template. Update credentials before starting service.\n' "$SKILL_PATH"
 fi
 
-run_cmd $SUDO mkdir -p "${SKILL_PATH}/openclaw"
-if [[ "$DRY_RUN" == "false" ]]; then
-  sed \
-    -e "s|__SKILL_PATH__|${SKILL_PATH}|g" \
-    -e "s|__SOCKET_PATH__|${SOCKET_PATH}|g" \
-    "openclaw/stdio-service.example.json" > "${TMP_DIR}/stdio-service.generated.json"
-  run_cmd $SUDO install -m 0644 "${TMP_DIR}/stdio-service.generated.json" "${SKILL_PATH}/openclaw/stdio-service.json"
-  run_cmd $SUDO chown "${RUN_USER}:${RUN_GROUP}" "${SKILL_PATH}/openclaw/stdio-service.json"
-else
-  printf '[dry-run] generate %s/openclaw/stdio-service.json from template\n' "$SKILL_PATH"
-fi
-
 if [[ "$NO_SYSTEMD" == "false" ]]; then
   if [[ ! -f "systemd/ews-skill-sync.service" ]]; then
     printf 'Missing systemd template: systemd/ews-skill-sync.service\n' >&2
@@ -252,8 +240,6 @@ printf 'Daemon user: %s\n' "$RUN_USER"
 printf 'Binaries:\n'
 printf '  %s/bin/ews_skilld\n' "$SKILL_PATH"
 printf '  %s/bin/ews_skillctl\n' "$SKILL_PATH"
-printf 'OpenClaw config:\n'
-printf '  %s/openclaw/stdio-service.json\n' "$SKILL_PATH"
 printf 'Next:\n'
 printf '  1) Edit %s/.env\n' "$SKILL_PATH"
 if [[ "$NO_SYSTEMD" == "false" ]]; then

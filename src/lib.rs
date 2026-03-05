@@ -119,9 +119,29 @@ impl EwsSkill {
         }
     }
 
-    pub fn search(&self, query: String, limit: Option<i32>) -> skill::ToolResult {
+    #[allow(clippy::too_many_arguments)]
+    pub fn search(
+        &self,
+        query: Option<String>,
+        subject: Option<String>,
+        sender: Option<String>,
+        date_from: Option<String>,
+        date_to: Option<String>,
+        folder_name: Option<String>,
+        limit: Option<i32>,
+        include_body: Option<bool>,
+    ) -> skill::ToolResult {
         match self.email_skill.lock() {
-            Ok(skill) => skill.email_search(query, limit),
+            Ok(skill) => skill.email_search(
+                query,
+                subject,
+                sender,
+                date_from,
+                date_to,
+                folder_name,
+                limit,
+                include_body,
+            ),
             Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
@@ -214,19 +234,45 @@ impl EwsSkill {
                 self.read_email(email_id)
             }
             "email_search" => {
-                let query = match args.get("query").and_then(|v| v.as_str()) {
-                    Some(v) => v.to_string(),
-                    None => {
-                        return skill::ToolResult::err(
-                            "missing required argument: query".to_string(),
-                        )
-                    }
-                };
+                let query = args
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
+                let subject = args
+                    .get("subject")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
+                let sender = args
+                    .get("sender")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
+                let date_from = args
+                    .get("date_from")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
+                let date_to = args
+                    .get("date_to")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
+                let folder_name = args
+                    .get("folder_name")
+                    .and_then(|v| v.as_str())
+                    .map(ToOwned::to_owned);
                 let limit = args
                     .get("limit")
                     .and_then(|v| v.as_i64())
                     .and_then(|v| i32::try_from(v).ok());
-                self.search(query, limit)
+                let include_body = args.get("include_body").and_then(|v| v.as_bool());
+                self.search(
+                    query,
+                    subject,
+                    sender,
+                    date_from,
+                    date_to,
+                    folder_name,
+                    limit,
+                    include_body,
+                )
             }
             "email_get_unread" => {
                 let folder_name = args

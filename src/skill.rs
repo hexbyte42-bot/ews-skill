@@ -114,10 +114,33 @@ impl EmailSkill {
         }
     }
 
-    pub fn email_search(&self, query: String, limit: Option<i32>) -> ToolResult {
-        let emails = self
+    #[allow(clippy::too_many_arguments)]
+    pub fn email_search(
+        &self,
+        query: Option<String>,
+        subject: Option<String>,
+        sender: Option<String>,
+        date_from: Option<String>,
+        date_to: Option<String>,
+        folder_name: Option<String>,
+        limit: Option<i32>,
+        include_body: Option<bool>,
+    ) -> ToolResult {
+        let emails = match self
             .service
-            .search(crate::email_service::EmailSearchOptions { query, limit });
+            .search(crate::email_service::EmailSearchOptions {
+                query,
+                subject,
+                sender,
+                date_from,
+                date_to,
+                folder_name,
+                limit,
+                include_body,
+            }) {
+            Ok(v) => v,
+            Err(e) => return ToolResult::err(e),
+        };
 
         let data: Vec<_> = emails
             .iter()
@@ -274,20 +297,44 @@ impl EmailSkill {
             }),
             json!({
                 "name": "email_search",
-                "description": "Search emails by subject, sender, or content",
+                "description": "Search emails by combined filters (query, subject, sender, time range, folder)",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Search query"
+                            "description": "Free-text query over subject/sender/body_text"
+                        },
+                        "subject": {
+                            "type": "string",
+                            "description": "Match subject text"
+                        },
+                        "sender": {
+                            "type": "string",
+                            "description": "Match sender email or name"
+                        },
+                        "date_from": {
+                            "type": "string",
+                            "description": "UTC lower bound (RFC3339), e.g. 2026-03-05T00:00:00Z"
+                        },
+                        "date_to": {
+                            "type": "string",
+                            "description": "UTC upper bound (RFC3339), e.g. 2026-03-06T00:00:00Z"
+                        },
+                        "folder_name": {
+                            "type": "string",
+                            "description": "Restrict search to folder display name"
                         },
                         "limit": {
                             "type": "number",
                             "description": "Maximum results (default: 50)"
+                        },
+                        "include_body": {
+                            "type": "boolean",
+                            "description": "Include body_text in query matching (default: true)"
                         }
                     },
-                    "required": ["query"]
+                    "required": []
                 }
             }),
             json!({

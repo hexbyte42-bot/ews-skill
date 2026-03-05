@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io;
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -44,7 +45,6 @@ struct ToolCallParams {
 
 #[derive(Debug, Clone)]
 enum Transport {
-    Stdio,
     Unix(PathBuf),
 }
 
@@ -86,18 +86,11 @@ fn main() {
         }
     };
 
-    match options.transport {
-        Transport::Stdio => {
-            info!("ews_skilld started (stdio JSON-RPC)");
-            run_stdio(&skill);
-        }
-        Transport::Unix(socket_path) => {
-            info!(socket = %socket_path.display(), "ews_skilld started (unix socket JSON-RPC)");
-            if let Err(e) = run_unix_socket(&skill, &socket_path) {
-                error!("unix socket server failed: {}", e);
-                std::process::exit(2);
-            }
-        }
+    let Transport::Unix(socket_path) = options.transport;
+    info!(socket = %socket_path.display(), "ews_skilld started (unix socket JSON-RPC)");
+    if let Err(e) = run_unix_socket(&skill, &socket_path) {
+        error!("unix socket server failed: {}", e);
+        std::process::exit(2);
     }
 
     info!("ews_skilld stopped");
@@ -106,7 +99,6 @@ fn main() {
 fn parse_cli_options() -> Result<CliOptions, String> {
     let mut args = env::args().skip(1);
     let mut config_path: Option<PathBuf> = None;
-    let mut transport = Transport::Stdio;
     let mut socket_path = PathBuf::from("/run/ews-skill/daemon.sock");
 
     while let Some(arg) = args.next() {
@@ -121,10 +113,9 @@ fn parse_cli_options() -> Result<CliOptions, String> {
             "--transport" => {
                 let value = args
                     .next()
-                    .ok_or_else(|| "--transport requires a value (stdio|unix)".to_string())?;
+                    .ok_or_else(|| "--transport requires a value (unix)".to_string())?;
                 match value.as_str() {
-                    "stdio" => transport = Transport::Stdio,
-                    "unix" => transport = Transport::Unix(socket_path.clone()),
+                    "unix" => {}
                     _ => return Err(format!("unsupported transport: {}", value)),
                 }
             }
@@ -138,43 +129,10 @@ fn parse_cli_options() -> Result<CliOptions, String> {
         }
     }
 
-    if matches!(transport, Transport::Unix(_)) {
-        transport = Transport::Unix(socket_path);
-    }
-
     Ok(CliOptions {
         config_path,
-        transport,
+        transport: Transport::Unix(socket_path),
     })
-}
-
-fn run_stdio(skill: &EwsSkill) {
-    let stdin = io::stdin();
-    let mut stdout = BufWriter::new(io::stdout());
-
-    for line in stdin.lock().lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(e) => {
-                error!("failed reading stdin: {}", e);
-                let _ = write_response(
-                    &mut stdout,
-                    rpc_error_response(Value::Null, -32000, format!("failed reading stdin: {}", e)),
-                );
-                continue;
-            }
-        };
-
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let response = parse_and_handle(skill, &line);
-        if let Err(e) = write_response(&mut stdout, response) {
-            error!("failed writing rpc response: {}", e);
-            break;
-        }
-    }
 }
 
 fn run_unix_socket(skill: &EwsSkill, socket_path: &Path) -> Result<(), String> {
@@ -295,7 +253,6 @@ fn handle_request(skill: &EwsSkill, request: RpcRequest) -> RpcResponse {
 
     match request.method.as_str() {
         "tools.list" => rpc_result_response(id, json!(EwsSkill::get_tools())),
-        "health.get" => rpc_result_response(id, tool_result_to_value(skill.health())),
         "tools.call" => {
             let params = match request.params {
                 Some(value) => value,

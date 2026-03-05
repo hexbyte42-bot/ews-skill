@@ -131,7 +131,6 @@ run_cmd $SUDO rm -f "/etc/systemd/system/${SERVICE_NAME}"
 run_cmd $SUDO systemctl daemon-reload
 
 run_cmd $SUDO rm -f "${SKILL_PATH}/bin/ews_skilld" "${SKILL_PATH}/bin/ews_skillctl"
-run_cmd $SUDO rm -f "${SKILL_PATH}/openclaw/stdio-service.json"
 
 if [[ "$PURGE" == "true" ]]; then
   run_cmd $SUDO rm -f "${SKILL_PATH}/.env"

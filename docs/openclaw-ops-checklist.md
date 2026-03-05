@@ -46,13 +46,12 @@ journalctl -u ews-skill-sync.service -n 100 --no-pager
 - OpenClaw command points to `<skill-path>/bin/ews_skillctl`
 - OpenClaw env includes `EWS_SOCKET_PATH=/run/ews-skill/daemon.sock`
 
-JSON-RPC sanity checks:
+CLI sanity checks:
 
-1. `tools.list`
-2. `health.get` with:
-   - `result.success=true`
-   - `result.data.auth_ok=true`
-   - `result.data.inbox_found=true`
+1. `ews_skillctl --json tools`
+2. `ews_skillctl --json health` returns:
+   - `auth_ok=true`
+   - `inbox_found=true`
 
 ## 4) Read-path functional checks
 
@@ -83,5 +82,4 @@ JSON-RPC sanity checks:
   - `ews_skilld`
   - `ews_skillctl`
   - `config.toml.example`
-  - `stdio-service.example.json`
   - `ews-skill-sync.service`

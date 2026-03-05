@@ -8,8 +8,8 @@ This project publishes precompiled release artifacts through GitHub Actions usin
 Push a version tag:
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 Or run manually from GitHub Actions using **workflow_dispatch**.
@@ -38,7 +38,6 @@ After workflow completion, verify:
    - `ews_skilld`
    - `ews_skillctl`
    - `config.toml.example`
-   - `stdio-service.example.json`
    - `ews-skill-sync.service`
 
 ## Known note

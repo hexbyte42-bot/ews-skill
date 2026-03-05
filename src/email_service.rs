@@ -29,8 +29,14 @@ pub struct EmailListOptions {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EmailSearchOptions {
-    pub query: String,
+    pub query: Option<String>,
+    pub subject: Option<String>,
+    pub sender: Option<String>,
+    pub date_from: Option<String>,
+    pub date_to: Option<String>,
+    pub folder_name: Option<String>,
     pub limit: Option<i32>,
+    pub include_body: Option<bool>,
 }
 
 impl EmailService {
@@ -79,9 +85,56 @@ impl EmailService {
         }
     }
 
-    pub fn search(&self, options: EmailSearchOptions) -> Vec<CachedEmail> {
-        self.repository
-            .search_emails(&options.query, options.limit.unwrap_or(50))
+    pub fn search(&self, options: EmailSearchOptions) -> Result<Vec<CachedEmail>, String> {
+        let has_filter = options.query.as_ref().is_some_and(|v| !v.trim().is_empty())
+            || options
+                .subject
+                .as_ref()
+                .is_some_and(|v| !v.trim().is_empty())
+            || options
+                .sender
+                .as_ref()
+                .is_some_and(|v| !v.trim().is_empty())
+            || options
+                .date_from
+                .as_ref()
+                .is_some_and(|v| !v.trim().is_empty())
+            || options
+                .date_to
+                .as_ref()
+                .is_some_and(|v| !v.trim().is_empty())
+            || options
+                .folder_name
+                .as_ref()
+                .is_some_and(|v| !v.trim().is_empty());
+
+        if !has_filter {
+            return Err(
+                "at least one search filter is required (query, subject, sender, date_from, date_to, folder_name)".to_string(),
+            );
+        }
+
+        let folder_id = if let Some(folder_name) = options.folder_name.as_ref() {
+            Some(
+                self.repository
+                    .get_folder_by_name(folder_name)
+                    .ok_or_else(|| format!("Folder not found: {}", folder_name))?
+                    .id,
+            )
+        } else {
+            None
+        };
+
+        Ok(self.repository.search_emails(
+            options.query.as_deref(),
+            options.subject.as_deref(),
+            options.sender.as_deref(),
+            options.date_from.as_deref(),
+            options.date_to.as_deref(),
+            folder_id.as_deref(),
+            options.limit.unwrap_or(50).clamp(1, 200),
+            options.include_body.unwrap_or(true),
+        ))
     }
 
     pub async fn send_email(&self, to: &str, subject: &str, body: &str) -> Result<String, String> {

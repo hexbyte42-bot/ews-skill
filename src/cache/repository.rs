@@ -1,7 +1,7 @@
 use crate::cache::db::Database;
 use crate::cache::models::{CachedEmail, CachedFolder, SyncState};
 use chrono::Utc;
-use rusqlite::{params, Row};
+use rusqlite::{params, params_from_iter, types::Value as SqlValue, Row};
 use std::collections::HashSet;
 use tracing::{debug, error};
 
@@ -213,15 +213,76 @@ impl Repository {
         out
     }
 
-    pub fn search_emails(&self, query: &str, limit: i32) -> Vec<CachedEmail> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn search_emails(
+        &self,
+        query: Option<&str>,
+        subject: Option<&str>,
+        sender: Option<&str>,
+        date_from: Option<&str>,
+        date_to: Option<&str>,
+        folder_id: Option<&str>,
+        limit: i32,
+        include_body: bool,
+    ) -> Vec<CachedEmail> {
         let conn = self.db.connection();
         let conn = conn.lock();
 
-        let search_pattern = format!("%{}%", query);
+        let mut sql = String::from(
+            "SELECT id, change_key, folder_id, subject, sender_name, sender_email, to_recipients, cc_recipients, body_text, body_html, has_attachments, is_read, importance, datetime_received, datetime_sent, cached_at FROM emails WHERE 1=1",
+        );
+        let mut values: Vec<SqlValue> = Vec::new();
 
-        let mut stmt = match conn.prepare(
-            "SELECT id, change_key, folder_id, subject, sender_name, sender_email, to_recipients, cc_recipients, body_text, body_html, has_attachments, is_read, importance, datetime_received, datetime_sent, cached_at FROM emails WHERE subject LIKE ?1 OR body_text LIKE ?1 OR sender_email LIKE ?1 ORDER BY datetime_received DESC LIMIT ?2"
-        ) {
+        if let Some(folder_id) = folder_id {
+            sql.push_str(" AND folder_id = ?");
+            values.push(SqlValue::from(folder_id.to_string()));
+        }
+
+        if let Some(subject) = subject.filter(|v| !v.trim().is_empty()) {
+            sql.push_str(" AND LOWER(subject) LIKE LOWER(?)");
+            values.push(SqlValue::from(format!("%{}%", subject)));
+        }
+
+        if let Some(sender) = sender.filter(|v| !v.trim().is_empty()) {
+            sql.push_str(
+                " AND (LOWER(sender_email) LIKE LOWER(?) OR LOWER(sender_name) LIKE LOWER(?))",
+            );
+            let pattern = format!("%{}%", sender);
+            values.push(SqlValue::from(pattern.clone()));
+            values.push(SqlValue::from(pattern));
+        }
+
+        if let Some(query) = query.filter(|v| !v.trim().is_empty()) {
+            if include_body {
+                sql.push_str(" AND (LOWER(subject) LIKE LOWER(?) OR LOWER(sender_email) LIKE LOWER(?) OR LOWER(sender_name) LIKE LOWER(?) OR LOWER(body_text) LIKE LOWER(?))");
+                let pattern = format!("%{}%", query);
+                values.push(SqlValue::from(pattern.clone()));
+                values.push(SqlValue::from(pattern.clone()));
+                values.push(SqlValue::from(pattern.clone()));
+                values.push(SqlValue::from(pattern));
+            } else {
+                sql.push_str(" AND (LOWER(subject) LIKE LOWER(?) OR LOWER(sender_email) LIKE LOWER(?) OR LOWER(sender_name) LIKE LOWER(?))");
+                let pattern = format!("%{}%", query);
+                values.push(SqlValue::from(pattern.clone()));
+                values.push(SqlValue::from(pattern.clone()));
+                values.push(SqlValue::from(pattern));
+            }
+        }
+
+        if let Some(date_from) = date_from.filter(|v| !v.trim().is_empty()) {
+            sql.push_str(" AND datetime_received IS NOT NULL AND datetime_received >= ?");
+            values.push(SqlValue::from(date_from.to_string()));
+        }
+
+        if let Some(date_to) = date_to.filter(|v| !v.trim().is_empty()) {
+            sql.push_str(" AND datetime_received IS NOT NULL AND datetime_received <= ?");
+            values.push(SqlValue::from(date_to.to_string()));
+        }
+
+        sql.push_str(" ORDER BY datetime_received DESC LIMIT ?");
+        values.push(SqlValue::from(limit.max(1)));
+
+        let mut stmt = match conn.prepare(&sql) {
             Ok(stmt) => stmt,
             Err(e) => {
                 error!("failed to prepare search_emails query: {}", e);
@@ -229,7 +290,7 @@ impl Repository {
             }
         };
 
-        let out = match stmt.query_map(params![search_pattern, limit], Self::row_to_email) {
+        let out = match stmt.query_map(params_from_iter(values), Self::row_to_email) {
             Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
             Err(e) => {
                 error!("failed to search emails: {}", e);

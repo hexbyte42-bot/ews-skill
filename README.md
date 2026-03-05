@@ -6,7 +6,7 @@ EWS email skill for OpenClaw with Outlook-style local cache (SQLite), autodiscov
 
 - On-prem Exchange via EWS SOAP
 - Local cache in SQLite for fast AI reads
-- Incremental sync with `SyncFolderItems`
+- Server-side windowed sync with incremental cache updates
 - Autodiscover support
 - Auth modes: `basic`, `ntlm`
 - OpenClaw-style tool definitions + dispatcher
@@ -27,7 +27,7 @@ bash scripts/install.sh --skill-path "$SKILL_PATH"
 Useful flags:
 
 ```bash
-bash scripts/install.sh --skill-path "$SKILL_PATH" --version v0.1.9
+bash scripts/install.sh --skill-path "$SKILL_PATH" --version vX.Y.Z
 bash scripts/install.sh --skill-path "$SKILL_PATH" --no-systemd
 bash scripts/install.sh --run-user openclaw
 bash scripts/install.sh --skill-path "$SKILL_PATH" --dry-run
@@ -61,7 +61,7 @@ Post-upgrade checks:
 sudo systemctl status ews-skill-sync.service
 ```
 
-Then run OpenClaw startup probes: `tools.list` and `health.get`.
+Then run OpenClaw startup probes: `ews_skillctl --json tools` and `ews_skillctl --json health`.
 
 Rollback (reinstall previous release):
 
@@ -146,20 +146,19 @@ SMOKE_DO_WRITE=true SMOKE_TEST_DELETE_MODES=true ./scripts/smoke_test.sh
 
 ### Use released binary with OpenClaw
 
-OpenClaw should run `<skill-path>/bin/ews_skillctl` (stdio bridge) and communicate with the
-systemd-managed daemon socket.
+OpenClaw should run `<skill-path>/bin/ews_skillctl` as a CLI client and parse `--json` output.
+`ews_skillctl` communicates with systemd-managed `ews_skilld` over Unix socket.
 
 For maintainers who publish release binaries, see `docs/releasing.md`.
 
 ## Automatic background syncing
 
-Background sync starts when an `EwsSkill` instance is alive. For OpenClaw external-process mode,
-run the stdio JSON-RPC daemon as the long-lived process.
+Background sync runs in `ews_skilld` (systemd recommended), while OpenClaw executes `ews_skillctl` CLI commands on demand.
 
 ### Option A: run manually
 
 ```bash
-cargo run --release --bin ews_skilld
+cargo run --release --bin ews_skilld -- --transport unix --socket /run/ews-skill/daemon.sock
 ```
 
 ### Option B: run as systemd service
@@ -216,7 +215,7 @@ sudo journalctl -u ews-skill-sync.service -f
 Primary integration mode is external process:
 
 - systemd runs `ews_skilld` (Exchange sync + cache) over Unix socket
-- OpenClaw runs `ews_skillctl` (stdio bridge) and forwards JSON-RPC to daemon socket
+- OpenClaw runs `ews_skillctl` CLI subcommands with `--json`
 
 For production rollout and validation, use `docs/openclaw-ops-checklist.md`.
 
@@ -225,45 +224,28 @@ Why this is a good fit for OpenClaw:
 - Most read operations are served from local cache for lower latency.
 - Exchange traffic is reduced to scheduled incremental sync.
 - Transient network/server failures are isolated in the daemon with retry/backoff.
-- OpenClaw only needs a simple stdio JSON-RPC contract.
+- OpenClaw can self-discover commands with `ews_skillctl --help`.
 
 NTLM requirement note:
 
 - For on-prem Exchange with `EWS_AUTH_MODE=ntlm`, always use a release that passes `--check-ntlm`.
 
-### Stdio JSON-RPC methods
+### ews_skillctl commands
 
-- `tools.list`
-- `tools.call`
-- `health.get`
-
-Request example (`tools.list`):
-
-```json
-{"jsonrpc":"2.0","id":1,"method":"tools.list","params":{}}
-```
-
-Request example (`tools.call`):
-
-```json
-{"jsonrpc":"2.0","id":2,"method":"tools.call","params":{"name":"email_list","args":{"folder_name":"inbox","limit":10}}}
-```
-
-Response shape:
-
-```json
-{"jsonrpc":"2.0","id":2,"result":{"success":true,"data":{},"error":null,"code":"OK"}}
-```
-
-Possible result codes:
-
-- `OK`
-- `E_BAD_ARGS`
-- `E_UNKNOWN_TOOL`
-- `E_AUTH`
-- `E_NOT_FOUND`
-- `E_SYNC`
-- `E_INTERNAL`
+- Discover full command usage:
+  - `ews_skillctl --help`
+  - `ews_skillctl <command> --help`
+- Common examples:
+  - health: `ews_skillctl --json health`
+  - list inbox: `ews_skillctl --json list --folder inbox --limit 20`
+  - read email: `ews_skillctl --json read --id "<email-id>"`
+  - search combined filters: `ews_skillctl --json search --sender "alice@company.com" --subject "invoice" --query "QBR" --limit 20`
+  - delete default (move to Deleted Items): `ews_skillctl --json delete --id "<email-id>"`
+  - delete soft (`SoftDelete`): `ews_skillctl --json delete --id "<email-id>" --skip-trash`
+- Search default window:
+  - last `30` days if `--date-from/--date-to` are not provided
+  - override via `EWS_CLI_SEARCH_DEFAULT_DAYS`
+  - disable per query with `--no-date-limit`
 
 Daemon logging:
 
@@ -274,23 +256,30 @@ Daemon logging:
 Socket path:
 
 - daemon default: `/run/ews-skill/daemon.sock`
-- bridge override: `EWS_SOCKET_PATH=/run/ews-skill/daemon.sock`
+- client override: `EWS_SOCKET_PATH=/run/ews-skill/daemon.sock`
 
-### OpenClaw launch config example
+### OpenClaw launch example
 
-See `openclaw/stdio-service.example.json` for a ready-to-adapt process definition.
-
-Minimal launch command (OpenClaw):
+Minimal command (OpenClaw task):
 
 ```bash
-$SKILL_PATH/bin/ews_skillctl
+$SKILL_PATH/bin/ews_skillctl --json health
 ```
 
 Recommended startup handshake from OpenClaw:
 
-1. `tools.list`
-2. `health.get`
-3. proceed only if `result.success=true` and `result.data.auth_ok=true`
+1. `$SKILL_PATH/bin/ews_skillctl --json tools`
+2. `$SKILL_PATH/bin/ews_skillctl --json health`
+3. proceed only if health `auth_ok=true`
+
+Troubleshooting `socket not found` (`No such file or directory (os error 2)`):
+
+- this usually means daemon startup is still in progress and socket is not ready yet
+- check service: `sudo systemctl status ews-skill-sync.service`
+- check logs: `sudo journalctl -u ews-skill-sync.service -n 200 --no-pager`
+- wait for log line `ews_skilld started` (socket ready)
+- verify socket path: `ls -l /run/ews-skill/daemon.sock`
+- retry: `$SKILL_PATH/bin/ews_skillctl --json health`
 
 ### Optional: embedded Rust API
 
