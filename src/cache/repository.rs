@@ -2,6 +2,7 @@ use crate::cache::db::Database;
 use crate::cache::models::{CachedEmail, CachedFolder, SyncState};
 use chrono::Utc;
 use rusqlite::{params, Row};
+use std::collections::HashSet;
 use tracing::{debug, error};
 
 pub struct Repository {
@@ -274,6 +275,63 @@ impl Repository {
                 params![new_folder_id, candidate],
             )
             .ok();
+        }
+    }
+
+    pub fn replace_folder_snapshot(&self, folder_id: &str, emails: &[CachedEmail]) {
+        let conn = self.db.connection();
+        let conn = conn.lock();
+
+        if let Err(e) = conn.execute(
+            "DELETE FROM emails WHERE folder_id = ?1",
+            params![folder_id],
+        ) {
+            error!("failed to clear folder snapshot {}: {}", folder_id, e);
+            return;
+        }
+        drop(conn);
+
+        for email in emails {
+            self.save_email(email);
+        }
+    }
+
+    pub fn prune_folder_before(&self, folder_id: &str, cutoff_rfc3339: &str) {
+        let conn = self.db.connection();
+        let conn = conn.lock();
+        conn.execute(
+            "DELETE FROM emails WHERE folder_id = ?1 AND datetime_received IS NOT NULL AND datetime_received < ?2",
+            params![folder_id, cutoff_rfc3339],
+        )
+        .ok();
+    }
+
+    pub fn remove_folder_rows_not_in(&self, folder_id: &str, keep_ids: &HashSet<String>) {
+        let conn = self.db.connection();
+        let conn = conn.lock();
+
+        let mut stmt = match conn.prepare("SELECT id FROM emails WHERE folder_id = ?1") {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                error!("failed to prepare remove_folder_rows_not_in query: {}", e);
+                return;
+            }
+        };
+
+        let existing: Vec<String> = match stmt.query_map(params![folder_id], |row| row.get(0)) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(e) => {
+                error!("failed to list folder rows for reconciliation: {}", e);
+                return;
+            }
+        };
+        drop(stmt);
+
+        for id in existing {
+            if !keep_ids.contains(&id) {
+                conn.execute("DELETE FROM emails WHERE id = ?1", params![id])
+                    .ok();
+            }
         }
     }
 

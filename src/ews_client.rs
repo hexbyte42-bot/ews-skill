@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose, Engine as _};
+use chrono::{DateTime, SecondsFormat, Utc};
 use curl::easy::{Auth, Easy, List};
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -400,6 +401,65 @@ impl EwsClient {
             .root_folder
             .items
             .into_vec())
+    }
+
+    pub async fn find_items_since(
+        &self,
+        folder_id: &str,
+        received_since: DateTime<Utc>,
+        page_size: i32,
+    ) -> Result<Vec<Email>, EwsError> {
+        let safe_folder_id = escape_xml(folder_id);
+        let page_size = page_size.clamp(1, 512);
+        let since = escape_xml(&received_since.to_rfc3339_opts(SecondsFormat::Secs, true));
+
+        let mut all_items = Vec::new();
+        let mut offset = 0;
+
+        loop {
+            let body = format!(
+                r#"<?xml version="1.0" encoding="utf-8"?>
+                <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+                              xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+                    <soap:Header>
+                        <t:RequestServerVersion Version="Exchange2016"/>
+                    </soap:Header>
+                    <soap:Body>
+                        <FindItem xmlns="http://schemas.microsoft.com/exchange/services/2006/messages" Traversal="Shallow">
+                            <ItemShape>
+                                <t:BaseShape>Default</t:BaseShape>
+                            </ItemShape>
+                            <IndexedPageItemView MaxEntriesReturned="{}" Offset="{}" BasePoint="Beginning"/>
+                            <Restriction>
+                                <t:IsGreaterThanOrEqualTo>
+                                    <t:FieldURI FieldURI="item:DateTimeReceived"/>
+                                    <t:FieldURIOrConstant>
+                                        <t:Constant Value="{}"/>
+                                    </t:FieldURIOrConstant>
+                                </t:IsGreaterThanOrEqualTo>
+                            </Restriction>
+                            <ParentFolderIds>
+                                <t:FolderId Id="{}"/>
+                            </ParentFolderIds>
+                        </FindItem>
+                    </soap:Body>
+                </soap:Envelope>"#,
+                page_size, offset, since, safe_folder_id
+            );
+
+            let response: FindItemResponse = self.send_request("FindItem", body).await?;
+            let root = response.response_messages.find_item.root_folder;
+            let mut page_items = root.items.into_vec();
+            let page_len = page_items.len() as i32;
+            all_items.append(&mut page_items);
+
+            if root.includes_last_item_in_range || page_len == 0 {
+                break;
+            }
+            offset += page_len;
+        }
+
+        Ok(all_items)
     }
 
     pub async fn send_email(
@@ -1299,6 +1359,8 @@ pub struct FindItemResponseMessage {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RootFolderData {
+    #[serde(rename = "@IncludesLastItemInRange", default)]
+    pub includes_last_item_in_range: bool,
     #[serde(rename = "Items")]
     pub items: ItemsResponse,
 }

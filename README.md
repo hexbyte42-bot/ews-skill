@@ -183,6 +183,7 @@ EWS_AUTH_MODE=ntlm
 EWS_AUTODISCOVER=true
 EWS_SYNC_FOLDERS=inbox,sentitems
 EWS_SYNC_INTERVAL_SECONDS=30
+EWS_SYNC_LOOKBACK_DAYS=7
 EWS_LOG_LEVEL=info
 EWS_RETRY_MAX_ATTEMPTS=5
 EWS_RETRY_BASE_MS=500
@@ -191,6 +192,11 @@ EWS_RETRY_MAX_BACKOFF_MS=10000
 # Optional: write daemon logs to file (otherwise stderr)
 # EWS_DAEMON_LOG_FILE=/var/log/ews_skilld.log
 ```
+
+`EWS_SYNC_LOOKBACK_DAYS` controls server-side sync window for all synced folders.
+
+- default: `7` (recommended)
+- set `0` for unlimited history (may be heavy on large mailboxes)
 
 3. Install and start service (done by installer):
 

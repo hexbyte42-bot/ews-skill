@@ -10,6 +10,7 @@ Use this checklist to validate production readiness for OpenClaw + `ews-skill`.
   - `EWS_PASSWORD`
   - `EWS_AUTH_MODE=ntlm`
   - `EWS_SYNC_FOLDERS=inbox,sentitems`
+  - `EWS_SYNC_LOOKBACK_DAYS=7` (or your configured window)
 - NTLM capability check passes:
 
 ```bash

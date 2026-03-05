@@ -42,6 +42,7 @@ Common tasks
 
 Data semantics
 - Time: timestamps are stored and returned in UTC.
+- Sync window: server-side sync is limited to `EWS_SYNC_LOOKBACK_DAYS` for all synced folders (default `7`, set `0` for unlimited).
 - Body fields:
   - `body_html`: raw HTML when available
   - `body_text`: plain text (derived from HTML or from `TextBody` fallback)

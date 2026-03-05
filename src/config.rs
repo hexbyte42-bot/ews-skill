@@ -115,6 +115,8 @@ pub struct SyncConfig {
     pub interval_seconds: u64,
     #[serde(default = "default_true")]
     pub initial_sync: bool,
+    #[serde(default = "default_lookback_days")]
+    pub lookback_days: u32,
 }
 
 fn default_folders() -> Vec<String> {
@@ -147,12 +149,17 @@ fn default_interval() -> u64 {
     30
 }
 
+fn default_lookback_days() -> u32 {
+    7
+}
+
 impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             folders: default_folders(),
             interval_seconds: default_interval(),
             initial_sync: true,
+            lookback_days: default_lookback_days(),
         }
     }
 }
@@ -222,6 +229,11 @@ impl Config {
         if let Ok(interval) = std::env::var("EWS_SYNC_INTERVAL_SECONDS") {
             if let Ok(parsed) = interval.parse::<u64>() {
                 config.sync.interval_seconds = parsed;
+            }
+        }
+        if let Ok(days) = std::env::var("EWS_SYNC_LOOKBACK_DAYS") {
+            if let Ok(parsed) = days.parse::<u32>() {
+                config.sync.lookback_days = parsed;
             }
         }
 

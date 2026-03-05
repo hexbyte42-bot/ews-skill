@@ -1,7 +1,7 @@
 use crate::cache::{CachedEmail, CachedFolder, Repository, SyncState};
 use crate::config::Config;
 use crate::ews_client::{distinguished_folder_id_from_spec, EwsClient};
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -92,6 +92,18 @@ impl SyncEngine {
 
     pub async fn full_sync_folder(&self, folder_id: &str) -> Result<(), String> {
         info!("Starting full sync for folder: {}", folder_id);
+        if self.config.sync.lookback_days > 0 {
+            sync_folder_windowed(
+                &self.repository,
+                &self.ews_client,
+                folder_id,
+                self.config.sync.lookback_days,
+            )
+            .await?;
+            info!("Full sync completed for folder: {}", folder_id);
+            return Ok(());
+        }
+
         let response = self
             .ews_client
             .sync_folder_items(folder_id, None, 512)
@@ -103,6 +115,16 @@ impl SyncEngine {
     }
 
     pub async fn incremental_sync(&self, folder_id: &str) -> Result<(), String> {
+        if self.config.sync.lookback_days > 0 {
+            return sync_folder_windowed(
+                &self.repository,
+                &self.ews_client,
+                folder_id,
+                self.config.sync.lookback_days,
+            )
+            .await;
+        }
+
         let state = self
             .repository
             .get_sync_state(folder_id)
@@ -139,6 +161,7 @@ impl SyncEngine {
         let ews_client = self.ews_client.clone();
         let repo = self.repository.clone();
         let interval = self.config.sync.interval_seconds;
+        let lookback_days = self.config.sync.lookback_days;
         let poll_control = self.poll_control.clone();
 
         runtime.spawn(async move {
@@ -148,14 +171,19 @@ impl SyncEngine {
                     _ = tokio::time::sleep(tokio::time::Duration::from_secs(interval)) => {
                         for folder in repo.list_folders() {
                             let folder_id = folder.id;
-                            let state = repo.get_sync_state(&folder_id).map(|s| s.sync_state);
-
-                            match ews_client.sync_folder_items(&folder_id, state, 512).await {
-                                Ok(response) => {
-                                    apply_sync_response_to_repo(&repo, &ews_client, &folder_id, response).await;
+                            if lookback_days > 0 {
+                                if let Err(e) = sync_folder_windowed(&repo, &ews_client, &folder_id, lookback_days).await {
+                                    error!("Windowed sync error for folder {}: {}", folder_id, e);
                                 }
-                                Err(e) => {
-                                    error!("Sync error for folder {}: {}", folder_id, e);
+                            } else {
+                                let state = repo.get_sync_state(&folder_id).map(|s| s.sync_state);
+                                match ews_client.sync_folder_items(&folder_id, state, 512).await {
+                                    Ok(response) => {
+                                        apply_sync_response_to_repo(&repo, &ews_client, &folder_id, response).await;
+                                    }
+                                    Err(e) => {
+                                        error!("Sync error for folder {}: {}", folder_id, e);
+                                    }
                                 }
                             }
                         }
@@ -188,6 +216,33 @@ impl SyncEngine {
     ) {
         apply_sync_response_to_repo(&self.repository, &self.ews_client, folder_id, response).await;
     }
+}
+
+async fn sync_folder_windowed(
+    repository: &Repository,
+    ews_client: &EwsClient,
+    folder_id: &str,
+    lookback_days: u32,
+) -> Result<(), String> {
+    let cutoff = Utc::now() - Duration::days(lookback_days as i64);
+    let items = ews_client
+        .find_items_since(folder_id, cutoff, 256)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut cached = Vec::with_capacity(items.len());
+    for mut email in items {
+        if needs_enrichment(&email) && !email.item_id.id.trim().is_empty() {
+            if let Ok(full) = ews_client.get_item(&email.item_id.id).await {
+                email = full;
+            }
+        }
+        cached.push(CachedEmail::from_ews_email(&email, folder_id));
+    }
+
+    repository.replace_folder_snapshot(folder_id, &cached);
+    repository.prune_folder_before(folder_id, &cutoff.to_rfc3339());
+    Ok(())
 }
 
 async fn apply_sync_response_to_repo(
