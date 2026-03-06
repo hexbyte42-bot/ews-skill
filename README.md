@@ -235,6 +235,9 @@ NTLM requirement note:
 - Discover full command usage:
   - `ews_skillctl --help`
   - `ews_skillctl <command> --help`
+- Output modes:
+  - default: JSON (AI-friendly)
+  - `--human`: concise human-readable summaries
 - Common examples:
   - health: `ews_skillctl --json health`
   - list inbox: `ews_skillctl --json list --folder inbox --limit 20`
@@ -271,6 +274,8 @@ Recommended startup handshake from OpenClaw:
 1. `$SKILL_PATH/bin/ews_skillctl --json tools`
 2. `$SKILL_PATH/bin/ews_skillctl --json health`
 3. proceed only if health `auth_ok=true`
+
+During startup, health may report `status=syncing` with progress while initial sync runs in background.
 
 Troubleshooting `socket not found` (`No such file or directory (os error 2)`):
 

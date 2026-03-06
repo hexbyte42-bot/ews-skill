@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::thread::sleep;
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
@@ -21,6 +22,9 @@ struct Cli {
 
     #[arg(long)]
     json: bool,
+
+    #[arg(long)]
+    human: bool,
 
     #[arg(long, env = "EWS_CLI_SEARCH_DEFAULT_DAYS", default_value_t = 30)]
     search_default_days: u32,
@@ -184,6 +188,29 @@ impl Client {
     }
 
     fn send_request(&self, request: &Value) -> Result<Value, String> {
+        let mut backoff_ms = 50u64;
+        let max_retries = 4u8;
+        let mut last_err = String::new();
+
+        for attempt in 0..=max_retries {
+            match self.send_request_once(request) {
+                Ok(v) => return Ok(v),
+                Err(e) => {
+                    last_err = e;
+                    if attempt < max_retries && is_retryable_socket_error(&last_err) {
+                        sleep(Duration::from_millis(backoff_ms));
+                        backoff_ms = (backoff_ms * 2).min(600);
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+
+        Err(last_err)
+    }
+
+    fn send_request_once(&self, request: &Value) -> Result<Value, String> {
         let mut stream = UnixStream::connect(&self.socket_path).map_err(|e| e.to_string())?;
         stream
             .set_read_timeout(Some(self.timeout))
@@ -208,6 +235,16 @@ impl Client {
 
         serde_json::from_str(response.trim()).map_err(|e| e.to_string())
     }
+}
+
+fn is_retryable_socket_error(message: &str) -> bool {
+    message.contains("Resource temporarily unavailable")
+        || message.contains("temporarily unavailable")
+        || message.contains("WouldBlock")
+}
+
+fn output_json(cli: &Cli) -> bool {
+    cli.json || !cli.human
 }
 
 fn print_output(as_json: bool, text: &str, payload: Value) {
@@ -262,6 +299,7 @@ fn parse_scalar_json(value: &str) -> Value {
 
 fn main() {
     let cli = Cli::parse();
+    let as_json = output_json(&cli);
     let Some(command) = cli.command else {
         eprintln!("No command provided. Run `ews_skillctl --help`.");
         std::process::exit(2);
@@ -276,7 +314,7 @@ fn main() {
             match (tools, health) {
                 (Ok(t), Ok(h)) => {
                     let payload = json!({"ok": true, "socket": cli.socket, "tools": t, "health": h});
-                    print_output(cli.json, "doctor: ok", payload);
+                    print_output(as_json, "doctor: ok", payload);
                     Ok(())
                 }
                 (t, h) => {
@@ -290,7 +328,7 @@ fn main() {
         }
         Command::Tools => match client.list_tools() {
             Ok(data) => {
-                if cli.json {
+                if as_json {
                     println!("{}", data);
                 } else {
                     println!("tools listed");
@@ -301,7 +339,7 @@ fn main() {
         },
         Command::Health => match client.call_tool("email_health", json!({})) {
             Ok(data) => {
-                print_output(cli.json, "health: ok", data);
+                print_output(as_json, "health: ok", data);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -310,7 +348,7 @@ fn main() {
             match parse_cli_args(&args.args) {
                 Ok(tool_args) => match client.call_tool(&args.tool, tool_args) {
                     Ok(data) => {
-                        if cli.json {
+                        if as_json {
                             println!("{}", data);
                         } else {
                             println!("call: {} ok", args.tool);
@@ -327,7 +365,7 @@ fn main() {
             json!({"folder_name": args.folder, "limit": args.limit, "unread_only": args.unread_only}),
         ) {
             Ok(data) => {
-                if cli.json {
+                if as_json {
                     println!("{}", data);
                 } else {
                     let count = data
@@ -343,7 +381,7 @@ fn main() {
         },
         Command::Read(args) => match client.call_tool("email_read", json!({"email_id": args.id})) {
             Ok(data) => {
-                if cli.json {
+                if as_json {
                     println!("{}", data);
                 } else {
                     let subject = data
@@ -381,10 +419,10 @@ fn main() {
                     "include_body": !args.no_body,
                 }),
             ) {
-            Ok(data) => {
-                if cli.json {
-                    println!("{}", data);
-                } else {
+                Ok(data) => {
+                    if as_json {
+                        println!("{}", data);
+                    } else {
                     let count = data
                         .get("results")
                         .and_then(Value::as_array)
@@ -402,7 +440,7 @@ fn main() {
             json!({"to": args.to, "subject": args.subject, "body": args.body}),
         ) {
             Ok(data) => {
-                print_output(cli.json, "send: ok", data);
+                print_output(as_json, "send: ok", data);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -412,7 +450,7 @@ fn main() {
             json!({"email_id": args.id, "destination_folder": args.folder}),
         ) {
             Ok(data) => {
-                print_output(cli.json, "move: ok", data);
+                print_output(as_json, "move: ok", data);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -422,14 +460,14 @@ fn main() {
             json!({"email_id": args.id, "skip_trash": args.skip_trash}),
         ) {
             Ok(data) => {
-                print_output(cli.json, "delete: ok", data);
+                print_output(as_json, "delete: ok", data);
                 Ok(())
             }
             Err(e) => Err(e),
         },
         Command::SyncNow => match client.call_tool("email_sync_now", json!({})) {
             Ok(data) => {
-                print_output(cli.json, "sync-now: ok", data);
+                print_output(as_json, "sync-now: ok", data);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -437,7 +475,7 @@ fn main() {
         Command::AddFolder(args) => {
             match client.call_tool("email_add_folder", json!({"folder_name": args.name})) {
                 Ok(data) => {
-                    print_output(cli.json, "add-folder: ok", data);
+                    print_output(as_json, "add-folder: ok", data);
                     Ok(())
                 }
                 Err(e) => Err(e),
@@ -460,7 +498,7 @@ fn main() {
     };
 
     if let Err(e) = result {
-        if cli.json {
+        if as_json {
             println!("{}", json!({"ok": false, "error": e}));
         } else {
             eprintln!("{}", e);

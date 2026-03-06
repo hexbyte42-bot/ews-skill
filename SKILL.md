@@ -18,12 +18,16 @@ Golden path
 - `ews_skillctl --json tools`
 - `ews_skillctl --json health`
 - `ews_skillctl --json list --folder inbox --limit 20`
+- During startup, `health` may return `status=syncing` with progress while initial sync runs.
 - If health check fails, see Troubleshooting at the end.
 
 CLI usage
 - Discover full command usage:
   - `ews_skillctl --help`
   - `ews_skillctl <command> --help`
+- Output modes:
+  - default: JSON
+  - `--human`: concise human-readable output
 - Common examples:
 
 ```bash

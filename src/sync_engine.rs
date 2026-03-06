@@ -1,7 +1,7 @@
 use crate::cache::{CachedEmail, CachedFolder, Repository, SyncState};
 use crate::config::Config;
 use crate::ews_client::{distinguished_folder_id_from_spec, EwsClient};
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -14,11 +14,37 @@ struct PollControl {
     stop_tx: Option<mpsc::Sender<()>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SyncHealthSnapshot {
+    pub status: String,
+    pub initial_sync_in_progress: bool,
+    pub synced_folders: usize,
+    pub total_folders: usize,
+    pub auth_ok: bool,
+    pub inbox_found: bool,
+    pub last_sync_at: Option<DateTime<Utc>>,
+}
+
+impl Default for SyncHealthSnapshot {
+    fn default() -> Self {
+        Self {
+            status: "starting".to_string(),
+            initial_sync_in_progress: false,
+            synced_folders: 0,
+            total_folders: 0,
+            auth_ok: false,
+            inbox_found: false,
+            last_sync_at: None,
+        }
+    }
+}
+
 pub struct SyncEngine {
     ews_client: EwsClient,
     repository: Repository,
     config: Config,
     poll_control: Arc<Mutex<PollControl>>,
+    health: Arc<Mutex<SyncHealthSnapshot>>,
 }
 
 impl SyncEngine {
@@ -28,6 +54,7 @@ impl SyncEngine {
             repository,
             config,
             poll_control: Arc::new(Mutex::new(PollControl::default())),
+            health: Arc::new(Mutex::new(SyncHealthSnapshot::default())),
         }
     }
 
@@ -35,22 +62,64 @@ impl SyncEngine {
         &self.ews_client
     }
 
+    pub fn health_snapshot(&self) -> SyncHealthSnapshot {
+        self.health.lock().clone()
+    }
+
     pub async fn initialize(&self) -> Result<(), String> {
         info!("Initializing sync engine");
 
+        {
+            let mut health = self.health.lock();
+            health.status = "starting".to_string();
+            health.auth_ok = false;
+            health.inbox_found = false;
+            health.synced_folders = 0;
+            health.total_folders = 0;
+            health.initial_sync_in_progress = false;
+        }
+
         for folder_name in &self.config.sync.folders {
             match self.find_and_cache_folder(folder_name).await {
-                Ok(Some(folder)) => info!(
-                    "Found and cached folder: {} ({})",
-                    folder.display_name, folder.id
-                ),
+                Ok(Some(folder)) => {
+                    {
+                        let mut health = self.health.lock();
+                        health.auth_ok = true;
+                        if folder.display_name.eq_ignore_ascii_case("inbox") {
+                            health.inbox_found = true;
+                        }
+                    }
+                    info!(
+                        "Found and cached folder: {} ({})",
+                        folder.display_name, folder.id
+                    );
+                }
                 Ok(None) => warn!("Folder not found: {}", folder_name),
-                Err(e) => error!("Error finding folder {}: {}", folder_name, e),
+                Err(e) => {
+                    error!("Error finding folder {}: {}", folder_name, e);
+                }
             }
         }
 
         if self.config.sync.initial_sync {
+            {
+                let mut health = self.health.lock();
+                health.status = "syncing".to_string();
+                health.initial_sync_in_progress = true;
+                health.synced_folders = 0;
+                health.total_folders = self.repository.list_folders().len();
+            }
             self.full_sync_all_folders().await?;
+            {
+                let mut health = self.health.lock();
+                health.status = "ready".to_string();
+                health.initial_sync_in_progress = false;
+                health.last_sync_at = Some(Utc::now());
+            }
+        } else {
+            let mut health = self.health.lock();
+            health.status = "ready".to_string();
+            health.initial_sync_in_progress = false;
         }
 
         Ok(())
@@ -82,10 +151,19 @@ impl SyncEngine {
     }
 
     pub async fn full_sync_all_folders(&self) -> Result<(), String> {
-        for folder in self.repository.list_folders() {
+        let folders = self.repository.list_folders();
+        {
+            let mut health = self.health.lock();
+            health.total_folders = folders.len();
+            health.synced_folders = 0;
+        }
+        for (idx, folder) in folders.iter().enumerate() {
             if let Err(e) = self.full_sync_folder(&folder.id).await {
                 error!("Error syncing folder {}: {}", folder.id, e);
             }
+            let mut health = self.health.lock();
+            health.synced_folders = idx + 1;
+            health.last_sync_at = Some(Utc::now());
         }
         Ok(())
     }
@@ -163,6 +241,7 @@ impl SyncEngine {
         let interval = self.config.sync.interval_seconds;
         let lookback_days = self.config.sync.lookback_days;
         let poll_control = self.poll_control.clone();
+        let health = self.health.clone();
 
         runtime.spawn(async move {
             loop {
@@ -186,6 +265,8 @@ impl SyncEngine {
                                     }
                                 }
                             }
+                            let mut health = health.lock();
+                            health.last_sync_at = Some(Utc::now());
                         }
                     }
                 }
@@ -308,6 +389,7 @@ impl Clone for SyncEngine {
             repository: self.repository.clone(),
             config: self.config.clone(),
             poll_control: self.poll_control.clone(),
+            health: self.health.clone(),
         }
     }
 }

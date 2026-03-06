@@ -12,11 +12,16 @@ pub struct EmailService {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HealthStatus {
     pub ews_url: String,
+    pub status: String,
+    pub initial_sync_in_progress: bool,
+    pub progress: String,
     pub auth_ok: bool,
     pub inbox_found: bool,
     pub cached_folders: i64,
     pub cached_emails: i64,
     pub synced_folders: usize,
+    pub total_folders: usize,
+    pub last_sync_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -225,21 +230,20 @@ impl EmailService {
     }
 
     pub async fn health_check(&self) -> HealthStatus {
-        let mut auth_ok = false;
-        let mut inbox_found = false;
-
-        if let Ok(folder) = self.sync_engine.find_and_cache_folder("inbox").await {
-            auth_ok = true;
-            inbox_found = folder.is_some();
-        }
+        let sync = self.sync_engine.health_snapshot();
 
         HealthStatus {
             ews_url: self.sync_engine.get_client().ews_url().to_string(),
-            auth_ok,
-            inbox_found,
+            status: sync.status,
+            initial_sync_in_progress: sync.initial_sync_in_progress,
+            progress: format!("{}/{} folders", sync.synced_folders, sync.total_folders),
+            auth_ok: sync.auth_ok,
+            inbox_found: sync.inbox_found,
             cached_folders: self.repository.count_folders(),
             cached_emails: self.repository.count_emails(),
-            synced_folders: self.repository.get_synced_folders().len(),
+            synced_folders: sync.synced_folders,
+            total_folders: sync.total_folders,
+            last_sync_at: sync.last_sync_at.map(|v| v.to_rfc3339()),
         }
     }
 }

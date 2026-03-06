@@ -14,6 +14,7 @@ use skill::EmailSkill;
 use std::sync::{Arc, Mutex};
 use sync_engine::SyncEngine;
 use tokio::runtime::Runtime;
+use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub struct EwsSkill {
@@ -70,9 +71,14 @@ impl EwsSkill {
         }
 
         let sync_engine = SyncEngine::new(ews_client, repository.clone(), config.clone());
-        runtime.block_on(sync_engine.initialize())?;
-
         sync_engine.start_polling(&runtime);
+
+        let init_engine = sync_engine.clone();
+        runtime.spawn(async move {
+            if let Err(e) = init_engine.initialize().await {
+                error!("sync engine initialization failed: {}", e);
+            }
+        });
 
         let email_service = EmailService::new(sync_engine.clone(), repository);
         let email_skill = EmailSkill::new(email_service, runtime.clone());

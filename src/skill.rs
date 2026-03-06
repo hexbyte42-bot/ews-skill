@@ -240,11 +240,16 @@ impl EmailSkill {
         let health = self.runtime.block_on(self.service.health_check());
         ToolResult::ok(json!({
             "ews_url": health.ews_url,
+            "status": health.status,
+            "initial_sync_in_progress": health.initial_sync_in_progress,
+            "progress": health.progress,
             "auth_ok": health.auth_ok,
             "inbox_found": health.inbox_found,
             "cached_folders": health.cached_folders,
             "cached_emails": health.cached_emails,
             "synced_folders": health.synced_folders,
+            "total_folders": health.total_folders,
+            "last_sync_at": health.last_sync_at,
         }))
     }
 
