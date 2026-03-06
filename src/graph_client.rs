@@ -3,6 +3,7 @@ use crate::graph_auth::{get_access_token, GraphAuthConfig};
 use chrono::{DateTime, Utc};
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use serde_json::json;
 
 #[derive(Clone)]
 pub struct GraphClient {
@@ -16,6 +17,18 @@ pub struct GraphFolder {
     pub display_name: String,
     pub unread_count: i32,
     pub total_count: i32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GraphSearchOptions {
+    pub query: Option<String>,
+    pub subject: Option<String>,
+    pub sender: Option<String>,
+    pub date_from: Option<DateTime<Utc>>,
+    pub date_to: Option<DateTime<Utc>>,
+    pub folder_name: Option<String>,
+    pub limit: i32,
+    pub include_body: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,24 +149,91 @@ impl GraphClient {
         Ok(self.message_to_cached_email(msg, "inbox"))
     }
 
-    pub fn search_emails(&self, query: &str, limit: i32) -> Result<Vec<CachedEmail>, String> {
-        let top = limit.clamp(1, 200);
-        let escaped = query.replace('"', "");
-        let url = format!(
-            "https://graph.microsoft.com/v1.0/me/messages?$top={}&$search=\"{}\"",
-            top, escaped
-        );
+    pub fn search_emails(&self, options: GraphSearchOptions) -> Result<Vec<CachedEmail>, String> {
+        let top = options.limit.clamp(1, 200);
+        let folder = options
+            .folder_name
+            .clone()
+            .unwrap_or_else(|| "inbox".to_string());
 
-        let response: GraphList<GraphMessage> = self
-            .request_with_header("GET", &url, Some(("ConsistencyLevel", "eventual")))?
+        let messages = if let Some(query) = options.query.as_ref().filter(|v| !v.trim().is_empty())
+        {
+            let escaped = query.replace('"', "");
+            let url = format!(
+                "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages?$top={}&$search=\"{}\"",
+                folder, top, escaped
+            );
+            self.request_with_header("GET", &url, Some(("ConsistencyLevel", "eventual")))?
+                .json::<GraphList<GraphMessage>>()
+                .map_err(|e| e.to_string())?
+                .value
+        } else {
+            let url = format!(
+                "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages?$top={}&$orderby=receivedDateTime%20desc",
+                folder, top
+            );
+            self.request("GET", &url)?
+                .json::<GraphList<GraphMessage>>()
+                .map_err(|e| e.to_string())?
+                .value
+        };
+
+        let mut out = Vec::new();
+        for msg in messages {
+            let email = self.message_to_cached_email(msg, &folder);
+            if !matches_filter(&email, &options) {
+                continue;
+            }
+            out.push(email);
+            if out.len() >= top as usize {
+                break;
+            }
+        }
+
+        Ok(out)
+    }
+
+    pub fn mark_read(&self, id: &str, is_read: bool) -> Result<(), String> {
+        let url = format!("https://graph.microsoft.com/v1.0/me/messages/{}", id);
+        self.request_with_json("PATCH", &url, json!({"isRead": is_read}))?;
+        Ok(())
+    }
+
+    pub fn send_email(&self, to: &str, subject: &str, body: &str) -> Result<(), String> {
+        let url = "https://graph.microsoft.com/v1.0/me/sendMail";
+        self.request_with_json(
+            "POST",
+            url,
+            json!({
+                "message": {
+                    "subject": subject,
+                    "body": {"contentType": "Text", "content": body},
+                    "toRecipients": [{"emailAddress": {"address": to}}]
+                },
+                "saveToSentItems": true
+            }),
+        )?;
+        Ok(())
+    }
+
+    pub fn move_email(&self, id: &str, destination_folder: &str) -> Result<String, String> {
+        let url = format!("https://graph.microsoft.com/v1.0/me/messages/{}/move", id);
+        let msg: GraphMessage = self
+            .request_with_json("POST", &url, json!({"destinationId": destination_folder}))?
             .json()
             .map_err(|e| e.to_string())?;
+        Ok(msg.id)
+    }
 
-        Ok(response
-            .value
-            .into_iter()
-            .map(|m| self.message_to_cached_email(m, "inbox"))
-            .collect())
+    pub fn delete_email(&self, id: &str, skip_trash: bool) -> Result<(), String> {
+        if skip_trash {
+            let url = format!("https://graph.microsoft.com/v1.0/me/messages/{}", id);
+            self.request("DELETE", &url)?;
+            return Ok(());
+        }
+
+        let _ = self.move_email(id, "deleteditems")?;
+        Ok(())
     }
 
     fn request(&self, method: &str, url: &str) -> Result<reqwest::blocking::Response, String> {
@@ -182,6 +262,28 @@ impl GraphClient {
         }
 
         req.send()
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())
+    }
+
+    fn request_with_json(
+        &self,
+        method: &str,
+        url: &str,
+        payload: serde_json::Value,
+    ) -> Result<reqwest::blocking::Response, String> {
+        let token = get_access_token(&self.auth)
+            .map_err(|e| format!("graph auth required: {}. run `ews_skillctl login`", e))?;
+
+        self.http
+            .request(
+                reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?,
+                url,
+            )
+            .bearer_auth(token)
+            .json(&payload)
+            .send()
             .map_err(|e| e.to_string())?
             .error_for_status()
             .map_err(|e| e.to_string())
@@ -253,4 +355,48 @@ fn parse_graph_datetime(value: Option<&str>) -> Option<DateTime<Utc>> {
     value
         .and_then(|v| DateTime::parse_from_rfc3339(v).ok())
         .map(|v| v.with_timezone(&Utc))
+}
+
+fn matches_filter(email: &CachedEmail, options: &GraphSearchOptions) -> bool {
+    if let Some(subject) = options.subject.as_ref().filter(|v| !v.trim().is_empty()) {
+        if !contains_ci(&email.subject, subject) {
+            return false;
+        }
+    }
+
+    if let Some(sender) = options.sender.as_ref().filter(|v| !v.trim().is_empty()) {
+        if !contains_ci(&email.sender_email, sender) && !contains_ci(&email.sender_name, sender) {
+            return false;
+        }
+    }
+
+    if let Some(query) = options.query.as_ref().filter(|v| !v.trim().is_empty()) {
+        let mut matched = contains_ci(&email.subject, query)
+            || contains_ci(&email.sender_email, query)
+            || contains_ci(&email.sender_name, query);
+        if options.include_body {
+            matched = matched || contains_ci(&email.body_text, query);
+        }
+        if !matched {
+            return false;
+        }
+    }
+
+    if let Some(from) = options.date_from {
+        if email.datetime_received.is_none_or(|v| v < from) {
+            return false;
+        }
+    }
+
+    if let Some(to) = options.date_to {
+        if email.datetime_received.is_none_or(|v| v > to) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn contains_ci(hay: &str, needle: &str) -> bool {
+    hay.to_lowercase().contains(&needle.to_lowercase())
 }

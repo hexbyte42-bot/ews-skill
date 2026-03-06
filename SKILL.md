@@ -85,7 +85,8 @@ Behavior notes
 - CLI search applies a default time window if `--date-from/--date-to` are omitted.
   - default: `30` days (`EWS_CLI_SEARCH_DEFAULT_DAYS`)
   - use `--no-date-limit` to disable per query
-- `MAIL_PROTOCOL=graph` currently supports read-path only (`health`, `list_folders`, `list`, `read`, `search`).
+- `MAIL_PROTOCOL=graph` supports `health/list_folders/list/read/search/send/move/delete/mark_read`.
+- In Graph mode, `email_sync_now` returns success as a no-op (live API reads).
 
 Upgrade
 - Latest: `bash scripts/install.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill"`
