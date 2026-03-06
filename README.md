@@ -239,12 +239,12 @@ NTLM requirement note:
   - default: JSON (AI-friendly)
   - `--human`: concise human-readable summaries
 - Common examples:
-  - health: `ews_skillctl --json health`
-  - list inbox: `ews_skillctl --json list --folder inbox --limit 20`
-  - read email: `ews_skillctl --json read --id "<email-id>"`
-  - search combined filters: `ews_skillctl --json search --sender "alice@company.com" --subject "invoice" --query "QBR" --limit 20`
-  - delete default (move to Deleted Items): `ews_skillctl --json delete --id "<email-id>"`
-  - delete soft (`SoftDelete`): `ews_skillctl --json delete --id "<email-id>" --skip-trash`
+  - health: `ews_skillctl health`
+  - list inbox: `ews_skillctl list --folder inbox --limit 20`
+  - read email: `ews_skillctl read --id "<email-id>"`
+  - search combined filters: `ews_skillctl search --sender "alice@company.com" --subject "invoice" --query "QBR" --limit 20`
+  - delete default (move to Deleted Items): `ews_skillctl delete --id "<email-id>"`
+  - delete soft (`SoftDelete`): `ews_skillctl delete --id "<email-id>" --skip-trash`
 - Search default window:
   - last `30` days if `--date-from/--date-to` are not provided
   - override via `EWS_CLI_SEARCH_DEFAULT_DAYS`
@@ -266,25 +266,25 @@ Socket path:
 Minimal command (OpenClaw task):
 
 ```bash
-$SKILL_PATH/bin/ews_skillctl --json health
+$SKILL_PATH/bin/ews_skillctl health
 ```
 
 Recommended startup handshake from OpenClaw:
 
-1. `$SKILL_PATH/bin/ews_skillctl --json tools`
-2. `$SKILL_PATH/bin/ews_skillctl --json health`
+1. `$SKILL_PATH/bin/ews_skillctl tools`
+2. `$SKILL_PATH/bin/ews_skillctl health`
 3. proceed only if health `auth_ok=true`
 
 During startup, health may report `status=syncing` with progress while initial sync runs in background.
 
 Troubleshooting `socket not found` (`No such file or directory (os error 2)`):
 
-- this usually means daemon startup is still in progress and socket is not ready yet
+- socket file is missing; service may have failed to start
 - check service: `sudo systemctl status ews-skill-sync.service`
 - check logs: `sudo journalctl -u ews-skill-sync.service -n 200 --no-pager`
-- wait for log line `ews_skilld started` (socket ready)
+- socket path should exist at `/run/ews-skill/daemon.sock`
 - verify socket path: `ls -l /run/ews-skill/daemon.sock`
-- retry: `$SKILL_PATH/bin/ews_skillctl --json health`
+- retry: `$SKILL_PATH/bin/ews_skillctl health`
 
 ### Optional: embedded Rust API
 

@@ -15,9 +15,9 @@ Quick start
 - `sudo systemctl restart ews-skill-sync.service`
 
 Golden path
-- `ews_skillctl --json tools`
-- `ews_skillctl --json health`
-- `ews_skillctl --json list --folder inbox --limit 20`
+- `ews_skillctl tools`
+- `ews_skillctl health`
+- `ews_skillctl list --folder inbox --limit 20`
 - During startup, `health` may return `status=syncing` with progress while initial sync runs.
 - If health check fails, see Troubleshooting at the end.
 
@@ -31,19 +31,43 @@ CLI usage
 - Common examples:
 
 ```bash
-ews_skillctl --json health
-ews_skillctl --json list --folder inbox --limit 20
-ews_skillctl --json read --id "<email-id>"
-ews_skillctl --json search --sender "alice@company.com" --subject "invoice" --query "QBR" --limit 20
-ews_skillctl --json delete --id "<email-id>"
-ews_skillctl --json delete --id "<email-id>" --skip-trash
+ews_skillctl health
+ews_skillctl list --folder inbox --limit 20
+ews_skillctl read --id "<email-id>"
+ews_skillctl search --sender "alice@company.com" --subject "invoice" --query "QBR" --limit 20
+ews_skillctl delete --id "<email-id>"
+ews_skillctl delete --id "<email-id>" --skip-trash
 ```
 
 - Generic/advanced calls:
 
 ```bash
-ews_skillctl --json call email_get_unread --arg folder_name=inbox --arg limit=20
+ews_skillctl call email_get_unread --arg folder_name=inbox --arg limit=20
 ews_skillctl rpc tools.call --params-json '{"name":"email_health","args":{}}'
+```
+
+Sync status monitoring
+
+```bash
+# During initial sync
+ews_skillctl health
+# -> {"status":"syncing","progress":"1/3 folders","synced_folders":1,...}
+
+# When ready
+ews_skillctl health
+# -> {"status":"ready","progress":"3/3 folders","synced_folders":3,...}
+```
+
+Output modes
+
+```bash
+# Default: full JSON output (AI-first)
+ews_skillctl health
+ews_skillctl list --folder inbox --limit 20
+
+# Human summaries (manual checks)
+ews_skillctl --human health
+ews_skillctl --human list --folder inbox --limit 20
 ```
 
 Behavior notes
@@ -74,16 +98,18 @@ Troubleshooting
    - `sudo journalctl -u ews-skill-sync.service -n 200 --no-pager`
    - `sudo journalctl -u ews-skill-sync.service -f`
 3. If `ews_skillctl` returns `No such file or directory (os error 2)`:
-   - this usually means unix socket is not ready yet
-   - wait for log line `ews_skilld started` (socket ready)
-   - then retry `ews_skillctl --json health`
+   - socket file is missing; service may have failed to start
+   - check service status: `systemctl status ews-skill-sync.service`
+   - check logs for startup errors
+   - expected socket path: `/run/ews-skill/daemon.sock`
+   - then retry `ews_skillctl health`
 4. Verify socket and permissions:
    - `ls -l /run/ews-skill/daemon.sock`
    - confirm `EWS_SOCKET_PATH` (if set) matches daemon socket path
    - daemon service user should match OpenClaw runtime user
 5. Retry checks:
-   - `ews_skillctl --json tools`
-   - `ews_skillctl --json health`
+   - `ews_skillctl tools`
+   - `ews_skillctl health`
 6. Validate required env in `<skill-path>/.env`:
    - `EWS_EMAIL`, `EWS_PASSWORD`, `EWS_AUTH_MODE=ntlm`
    - `EWS_SYNC_FOLDERS`, `EWS_SYNC_LOOKBACK_DAYS`
