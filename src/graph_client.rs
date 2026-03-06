@@ -34,6 +34,8 @@ pub struct GraphSearchOptions {
 #[derive(Debug, Deserialize)]
 struct GraphList<T> {
     value: Vec<T>,
+    #[serde(rename = "@odata.nextLink")]
+    next_link: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,42 +152,66 @@ impl GraphClient {
     }
 
     pub fn search_emails(&self, options: GraphSearchOptions) -> Result<Vec<CachedEmail>, String> {
-        let top = options.limit.clamp(1, 200);
-        let folder = options
-            .folder_name
-            .clone()
-            .unwrap_or_else(|| "inbox".to_string());
+        let limit = options.limit.clamp(1, 200) as usize;
+        let top_per_page = 200;
 
-        let messages = if let Some(query) = options.query.as_ref().filter(|v| !v.trim().is_empty())
+        let base_url = if let Some(folder) = options
+            .folder_name
+            .as_ref()
+            .filter(|v| !v.trim().is_empty())
         {
-            let escaped = query.replace('"', "");
-            let url = format!(
-                "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages?$top={}&$search=\"{}\"",
-                folder, top, escaped
-            );
-            self.request_with_header("GET", &url, Some(("ConsistencyLevel", "eventual")))?
-                .json::<GraphList<GraphMessage>>()
-                .map_err(|e| e.to_string())?
-                .value
+            format!(
+                "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages",
+                folder
+            )
         } else {
-            let url = format!(
-                "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages?$top={}&$orderby=receivedDateTime%20desc",
-                folder, top
-            );
-            self.request("GET", &url)?
-                .json::<GraphList<GraphMessage>>()
-                .map_err(|e| e.to_string())?
-                .value
+            "https://graph.microsoft.com/v1.0/me/messages".to_string()
         };
 
+        let mut url = if let Some(query) = options.query.as_ref().filter(|v| !v.trim().is_empty()) {
+            let escaped = query.replace('"', "");
+            format!("{}?$top={}&$search=\"{}\"", base_url, top_per_page, escaped)
+        } else {
+            format!(
+                "{}?$top={}&$orderby=receivedDateTime%20desc",
+                base_url, top_per_page
+            )
+        };
+
+        let use_eventual = options.query.as_ref().is_some_and(|q| !q.trim().is_empty());
+
         let mut out = Vec::new();
-        for msg in messages {
-            let email = self.message_to_cached_email(msg, &folder);
-            if !matches_filter(&email, &options) {
-                continue;
+        loop {
+            let page: GraphList<GraphMessage> = if use_eventual {
+                self.request_with_header("GET", &url, Some(("ConsistencyLevel", "eventual")))?
+                    .json()
+                    .map_err(|e| e.to_string())?
+            } else {
+                self.request("GET", &url)?
+                    .json()
+                    .map_err(|e| e.to_string())?
+            };
+
+            let folder_for_map = options
+                .folder_name
+                .as_deref()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or("inbox");
+
+            for msg in page.value {
+                let email = self.message_to_cached_email(msg, folder_for_map);
+                if !matches_filter(&email, &options) {
+                    continue;
+                }
+                out.push(email);
+                if out.len() >= limit {
+                    return Ok(out);
+                }
             }
-            out.push(email);
-            if out.len() >= top as usize {
+
+            if let Some(next) = page.next_link {
+                url = next;
+            } else {
                 break;
             }
         }
