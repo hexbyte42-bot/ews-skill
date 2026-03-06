@@ -1,5 +1,6 @@
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use clap::{Args, Parser, Subcommand};
+use ews_skill::graph_auth::{login_device_code, logout as graph_logout, GraphAuthConfig};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -35,6 +36,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    Login,
+    Logout,
     Doctor,
     Tools,
     Health,
@@ -305,9 +308,56 @@ fn main() {
         std::process::exit(2);
     };
 
+    match command {
+        Command::Login => {
+            let auth = graph_auth_from_env().unwrap_or_else(|e| {
+                eprintln!("{}", e);
+                std::process::exit(2);
+            });
+            if let Err(e) = login_device_code(&auth) {
+                if as_json {
+                    println!("{}", json!({"ok": false, "error": e}));
+                } else {
+                    eprintln!("{}", e);
+                }
+                std::process::exit(1);
+            }
+            if as_json {
+                println!(
+                    "{}",
+                    json!({"ok": true, "message": "graph delegated login successful"})
+                );
+            } else {
+                println!("graph delegated login successful");
+            }
+            return;
+        }
+        Command::Logout => {
+            if let Err(e) = graph_logout() {
+                if as_json {
+                    println!("{}", json!({"ok": false, "error": e}));
+                } else {
+                    eprintln!("{}", e);
+                }
+                std::process::exit(1);
+            }
+            if as_json {
+                println!(
+                    "{}",
+                    json!({"ok": true, "message": "graph delegated token cache cleared"})
+                );
+            } else {
+                println!("graph delegated token cache cleared");
+            }
+            return;
+        }
+        _ => {}
+    }
+
     let client = Client::new(cli.socket.clone(), cli.timeout_ms);
 
     let result = match command {
+        Command::Login | Command::Logout => unreachable!(),
         Command::Doctor => {
             let tools = client.list_tools();
             let health = client.call_tool("email_health", json!({}));
@@ -505,4 +555,15 @@ fn main() {
         }
         std::process::exit(1);
     }
+}
+
+fn graph_auth_from_env() -> Result<GraphAuthConfig, String> {
+    let tenant_id = std::env::var("GRAPH_TENANT_ID")
+        .map_err(|_| "missing GRAPH_TENANT_ID in environment".to_string())?;
+    let client_id = std::env::var("GRAPH_CLIENT_ID")
+        .map_err(|_| "missing GRAPH_CLIENT_ID in environment".to_string())?;
+    Ok(GraphAuthConfig {
+        tenant_id,
+        client_id,
+    })
 }

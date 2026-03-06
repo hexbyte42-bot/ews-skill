@@ -16,9 +16,17 @@ pub struct Config {
     #[serde(default)]
     pub exchange: ExchangeConfig,
     #[serde(default)]
+    pub graph: GraphConfig,
+    #[serde(default)]
     pub cache: CacheConfig,
     #[serde(default)]
     pub sync: SyncConfig,
+    #[serde(default = "default_mail_protocol")]
+    pub mail_protocol: String,
+}
+
+fn default_mail_protocol() -> String {
+    "ews".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -66,6 +74,26 @@ impl ExchangeConfig {
         }
         if self.password.is_empty() {
             return Err(ConfigError::MissingField("password".to_string()));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct GraphConfig {
+    #[serde(default)]
+    pub tenant_id: String,
+    #[serde(default)]
+    pub client_id: String,
+}
+
+impl GraphConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.tenant_id.trim().is_empty() {
+            return Err(ConfigError::MissingField("GRAPH_TENANT_ID".to_string()));
+        }
+        if self.client_id.trim().is_empty() {
+            return Err(ConfigError::MissingField("GRAPH_CLIENT_ID".to_string()));
         }
         Ok(())
     }
@@ -176,7 +204,10 @@ impl Config {
         let config: Config =
             toml::from_str(&content).map_err(|e| ConfigError::LoadError(e.to_string()))?;
 
-        config.exchange.validate()?;
+        match config.mail_protocol.as_str() {
+            "graph" => config.graph.validate()?,
+            _ => config.exchange.validate()?,
+        }
         Ok(config)
     }
 
@@ -236,8 +267,20 @@ impl Config {
                 config.sync.lookback_days = parsed;
             }
         }
+        if let Ok(protocol) = std::env::var("MAIL_PROTOCOL") {
+            config.mail_protocol = protocol.to_lowercase();
+        }
+        if let Ok(client_id) = std::env::var("GRAPH_CLIENT_ID") {
+            config.graph.client_id = client_id;
+        }
+        if let Ok(tenant_id) = std::env::var("GRAPH_TENANT_ID") {
+            config.graph.tenant_id = tenant_id;
+        }
 
-        config.exchange.validate()?;
+        match config.mail_protocol.as_str() {
+            "graph" => config.graph.validate()?,
+            _ => config.exchange.validate()?,
+        }
         Ok(config)
     }
 }

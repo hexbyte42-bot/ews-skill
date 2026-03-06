@@ -2,6 +2,8 @@ pub mod cache;
 pub mod config;
 pub mod email_service;
 pub mod ews_client;
+pub mod graph_auth;
+pub mod graph_client;
 pub mod skill;
 pub mod sync_engine;
 
@@ -9,6 +11,8 @@ use cache::{Database, Repository};
 use config::Config;
 use email_service::EmailService;
 use ews_client::{ntlm_supported, EwsClient, EwsClientOptions};
+use graph_auth::{token_state, GraphAuthConfig};
+use graph_client::GraphClient;
 use serde_json::Value;
 use skill::EmailSkill;
 use std::sync::{Arc, Mutex};
@@ -18,8 +22,11 @@ use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub struct EwsSkill {
-    email_skill: Arc<Mutex<EmailSkill>>,
-    sync_engine: SyncEngine,
+    email_skill: Option<Arc<Mutex<EmailSkill>>>,
+    sync_engine: Option<SyncEngine>,
+    graph_client: Option<GraphClient>,
+    protocol: String,
+    graph_auth: Option<GraphAuthConfig>,
 }
 
 impl EwsSkill {
@@ -32,6 +39,27 @@ impl EwsSkill {
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(filter)
             .try_init();
+
+        if config.mail_protocol.eq_ignore_ascii_case("graph") {
+            let db = Database::new(&config.cache.path).map_err(|e| e.to_string())?;
+            db.ensure_account_scope(&format!(
+                "graph:{}:{}",
+                config.graph.tenant_id, config.graph.client_id
+            ))
+            .map_err(|e| e.to_string())?;
+            let graph_auth = GraphAuthConfig {
+                tenant_id: config.graph.tenant_id.clone(),
+                client_id: config.graph.client_id.clone(),
+            };
+            let graph_client = GraphClient::new(graph_auth.clone());
+            return Ok(Self {
+                email_skill: None,
+                sync_engine: None,
+                graph_client: Some(graph_client),
+                protocol: "graph".to_string(),
+                graph_auth: Some(graph_auth),
+            });
+        }
 
         let db = Database::new(&config.cache.path).map_err(|e| e.to_string())?;
         db.ensure_account_scope(&config.exchange.email)
@@ -84,8 +112,11 @@ impl EwsSkill {
         let email_skill = EmailSkill::new(email_service, runtime.clone());
 
         Ok(Self {
-            email_skill: Arc::new(Mutex::new(email_skill)),
-            sync_engine,
+            email_skill: Some(Arc::new(Mutex::new(email_skill))),
+            sync_engine: Some(sync_engine),
+            graph_client: None,
+            protocol: "ews".to_string(),
+            graph_auth: None,
         })
     }
 
@@ -100,9 +131,30 @@ impl EwsSkill {
     }
 
     pub fn list_folders(&self) -> skill::ToolResult {
-        match self.email_skill.lock() {
-            Ok(skill) => skill.list_folders(),
-            Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+        if self.protocol == "graph" {
+            return match self
+                .graph_client
+                .as_ref()
+                .ok_or_else(|| "graph client not initialized".to_string())
+            {
+                Ok(client) => match client.list_folders() {
+                    Ok(folders) => skill::ToolResult::ok(serde_json::json!({
+                        "folders": folders.into_iter().map(|f| serde_json::json!({
+                            "id": f.id,
+                            "display_name": f.display_name,
+                            "unread_count": f.unread_count,
+                            "total_count": f.total_count,
+                        })).collect::<Vec<_>>()
+                    })),
+                    Err(e) => skill::ToolResult::err(e),
+                },
+                Err(e) => skill::ToolResult::err(e),
+            };
+        }
+
+        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+            Some(skill) => skill.list_folders(),
+            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
 
@@ -112,16 +164,68 @@ impl EwsSkill {
         limit: Option<i32>,
         unread_only: Option<bool>,
     ) -> skill::ToolResult {
-        match self.email_skill.lock() {
-            Ok(skill) => skill.list_emails(folder_name, limit, unread_only),
-            Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+        if self.protocol == "graph" {
+            let client = match self.graph_client.as_ref() {
+                Some(c) => c,
+                None => return skill::ToolResult::err("graph client not initialized".to_string()),
+            };
+            let folder = folder_name.unwrap_or_else(|| "inbox".to_string());
+            return match client.list_emails(
+                &folder,
+                limit.unwrap_or(50),
+                unread_only.unwrap_or(false),
+            ) {
+                Ok(emails) => skill::ToolResult::ok(serde_json::json!({
+                    "emails": emails.into_iter().map(|e| serde_json::json!({
+                        "id": e.id,
+                        "subject": e.subject,
+                        "sender_name": e.sender_name,
+                        "sender_email": e.sender_email,
+                        "is_read": e.is_read,
+                        "has_attachments": e.has_attachments,
+                        "importance": e.importance,
+                        "datetime_received": e.datetime_received,
+                    })).collect::<Vec<_>>()
+                })),
+                Err(e) => skill::ToolResult::err(e),
+            };
+        }
+
+        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+            Some(skill) => skill.list_emails(folder_name, limit, unread_only),
+            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
 
     pub fn read_email(&self, email_id: String) -> skill::ToolResult {
-        match self.email_skill.lock() {
-            Ok(skill) => skill.email_read(email_id),
-            Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+        if self.protocol == "graph" {
+            let client = match self.graph_client.as_ref() {
+                Some(c) => c,
+                None => return skill::ToolResult::err("graph client not initialized".to_string()),
+            };
+            return match client.read_email(&email_id) {
+                Ok(email) => skill::ToolResult::ok(serde_json::json!({
+                    "id": email.id,
+                    "subject": email.subject,
+                    "sender_name": email.sender_name,
+                    "sender_email": email.sender_email,
+                    "to_recipients": email.to_recipients,
+                    "cc_recipients": email.cc_recipients,
+                    "body_text": email.body_text,
+                    "body_html": email.body_html,
+                    "is_read": email.is_read,
+                    "has_attachments": email.has_attachments,
+                    "importance": email.importance,
+                    "datetime_received": email.datetime_received,
+                    "datetime_sent": email.datetime_sent,
+                })),
+                Err(e) => skill::ToolResult::err(e),
+            };
+        }
+
+        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+            Some(skill) => skill.email_read(email_id),
+            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
 
@@ -137,8 +241,34 @@ impl EwsSkill {
         limit: Option<i32>,
         include_body: Option<bool>,
     ) -> skill::ToolResult {
-        match self.email_skill.lock() {
-            Ok(skill) => skill.email_search(
+        if self.protocol == "graph" {
+            let client = match self.graph_client.as_ref() {
+                Some(c) => c,
+                None => return skill::ToolResult::err("graph client not initialized".to_string()),
+            };
+            let q = query.or(subject).or(sender).unwrap_or_default();
+            if q.trim().is_empty() {
+                return skill::ToolResult::err(
+                    "graph search currently requires one textual filter".to_string(),
+                );
+            }
+            return match client.search_emails(&q, limit.unwrap_or(50)) {
+                Ok(results) => skill::ToolResult::ok(serde_json::json!({
+                    "results": results.into_iter().map(|e| serde_json::json!({
+                        "id": e.id,
+                        "subject": e.subject,
+                        "sender_name": e.sender_name,
+                        "sender_email": e.sender_email,
+                        "is_read": e.is_read,
+                        "datetime_received": e.datetime_received,
+                    })).collect::<Vec<_>>()
+                })),
+                Err(e) => skill::ToolResult::err(e),
+            };
+        }
+
+        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+            Some(skill) => skill.email_search(
                 query,
                 subject,
                 sender,
@@ -148,63 +278,145 @@ impl EwsSkill {
                 limit,
                 include_body,
             ),
-            Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
 
     pub fn get_unread(&self, folder_name: Option<String>, limit: Option<i32>) -> skill::ToolResult {
-        match self.email_skill.lock() {
-            Ok(skill) => skill.get_unread(folder_name, limit),
-            Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+        if self.protocol == "graph" {
+            let client = match self.graph_client.as_ref() {
+                Some(c) => c,
+                None => return skill::ToolResult::err("graph client not initialized".to_string()),
+            };
+            let folder = folder_name.unwrap_or_else(|| "inbox".to_string());
+            return match client.list_emails(&folder, limit.unwrap_or(20), true) {
+                Ok(emails) => skill::ToolResult::ok(serde_json::json!({
+                    "emails": emails.into_iter().map(|e| serde_json::json!({
+                        "id": e.id,
+                        "subject": e.subject,
+                        "sender_name": e.sender_name,
+                        "sender_email": e.sender_email,
+                        "datetime_received": e.datetime_received,
+                    })).collect::<Vec<_>>()
+                })),
+                Err(e) => skill::ToolResult::err(e),
+            };
+        }
+
+        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+            Some(skill) => skill.get_unread(folder_name, limit),
+            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
 
     pub fn mark_read(&self, email_id: String, is_read: bool) -> skill::ToolResult {
-        match self.email_skill.lock() {
-            Ok(skill) => skill.mark_read(email_id, is_read),
-            Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+        if self.protocol == "graph" {
+            return skill::ToolResult::err(format!(
+                "graph backend write operation not implemented yet: mark_read({}, {})",
+                email_id, is_read
+            ));
+        }
+        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+            Some(skill) => skill.mark_read(email_id, is_read),
+            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
 
     pub fn send(&self, to: String, subject: String, body: String) -> skill::ToolResult {
-        match self.email_skill.lock() {
-            Ok(skill) => skill.send_email(to, subject, body),
-            Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+        if self.protocol == "graph" {
+            return skill::ToolResult::err(format!(
+                "graph backend write operation not implemented yet: send({}, {}, <body>)",
+                to, subject
+            ));
+        }
+        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+            Some(skill) => skill.send_email(to, subject, body),
+            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
 
     pub fn move_email(&self, email_id: String, destination_folder: String) -> skill::ToolResult {
-        match self.email_skill.lock() {
-            Ok(skill) => skill.move_email(email_id, destination_folder),
-            Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+        if self.protocol == "graph" {
+            return skill::ToolResult::err(format!(
+                "graph backend write operation not implemented yet: move({}, {})",
+                email_id, destination_folder
+            ));
+        }
+        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+            Some(skill) => skill.move_email(email_id, destination_folder),
+            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
 
     pub fn delete(&self, email_id: String, skip_trash: bool) -> skill::ToolResult {
-        match self.email_skill.lock() {
-            Ok(skill) => skill.delete_email(email_id, skip_trash),
-            Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+        if self.protocol == "graph" {
+            return skill::ToolResult::err(format!(
+                "graph backend write operation not implemented yet: delete({}, skip_trash={})",
+                email_id, skip_trash
+            ));
+        }
+        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+            Some(skill) => skill.delete_email(email_id, skip_trash),
+            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
 
     pub fn sync(&self) -> skill::ToolResult {
-        match self.email_skill.lock() {
-            Ok(skill) => skill.sync_now(),
-            Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+        if self.protocol == "graph" {
+            return skill::ToolResult::err(
+                "graph backend sync_now is not implemented yet".to_string(),
+            );
+        }
+        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+            Some(skill) => skill.sync_now(),
+            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
 
     pub fn add_folder(&self, folder_name: String) -> skill::ToolResult {
-        match self.email_skill.lock() {
-            Ok(skill) => skill.add_folder(folder_name),
-            Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+        if self.protocol == "graph" {
+            return skill::ToolResult::err(format!(
+                "graph backend add_folder is not implemented yet: {}",
+                folder_name
+            ));
+        }
+        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+            Some(skill) => skill.add_folder(folder_name),
+            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
 
     pub fn health(&self) -> skill::ToolResult {
-        match self.email_skill.lock() {
-            Ok(skill) => skill.health(),
-            Err(_) => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+        if self.protocol == "graph" {
+            let auth = self
+                .graph_auth
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| "graph auth config missing".to_string());
+            return match auth {
+                Ok(auth) => {
+                    let (ok, err) = token_state(&auth);
+                    let status = if ok { "ready" } else { "auth_required" };
+                    skill::ToolResult::ok(serde_json::json!({
+                        "backend": "graph",
+                        "status": status,
+                        "auth_ok": ok,
+                        "inbox_found": ok,
+                        "initial_sync_in_progress": false,
+                        "progress": "0/0 folders",
+                        "synced_folders": 0,
+                        "total_folders": 0,
+                        "last_sync_at": Value::Null,
+                        "error": err,
+                    }))
+                }
+                Err(e) => skill::ToolResult::err(e),
+            };
+        }
+
+        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+            Some(skill) => skill.health(),
+            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
     }
 
@@ -389,6 +601,8 @@ impl EwsSkill {
 
 impl Drop for EwsSkill {
     fn drop(&mut self) {
-        self.sync_engine.stop_polling();
+        if let Some(sync_engine) = &self.sync_engine {
+            sync_engine.stop_polling();
+        }
     }
 }

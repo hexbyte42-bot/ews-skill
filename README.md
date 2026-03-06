@@ -123,6 +123,21 @@ export EWS_LOG_LEVEL='info'          # trace | debug | info | warn | error
 export EWS_RETRY_MAX_ATTEMPTS=5
 export EWS_RETRY_BASE_MS=500
 export EWS_RETRY_MAX_BACKOFF_MS=10000
+
+# Protocol selection: ews (default) | graph
+export MAIL_PROTOCOL='ews'
+
+# For Graph delegated mode (single-tenant)
+# export MAIL_PROTOCOL='graph'
+# export GRAPH_CLIENT_ID='xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+# export GRAPH_TENANT_ID='xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+```
+
+Graph delegated login/logout (required before Graph protocol health/list/read/search):
+
+```bash
+GRAPH_CLIENT_ID='...' GRAPH_TENANT_ID='...' ews_skillctl login
+ews_skillctl logout
 ```
 
 2. Run daemon manually (optional):
@@ -304,6 +319,12 @@ If you are not using OpenClaw external process mode, the crate still exposes `Ew
 - `email_delete`
 - `email_sync_now`
 - `email_add_folder`
+
+Protocol note:
+
+- `MAIL_PROTOCOL=ews`: full current functionality.
+- `MAIL_PROTOCOL=graph`: delegated auth + read-path (`health`, `list_folders`, `list`, `read`, `search`) is available.
+- Graph write-path (`send/move/delete/mark_read/sync`) is not implemented yet in this release.
 
 `email_delete` behavior:
 

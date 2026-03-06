@@ -14,6 +14,11 @@ Quick start
 - Edit `$HOME/.openclaw/workspace/skill/ews-skill/.env`
 - `sudo systemctl restart ews-skill-sync.service`
 
+Graph delegated login (single-tenant)
+- Set env: `MAIL_PROTOCOL=graph`, `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`
+- Run: `ews_skillctl login`
+- Clear token cache: `ews_skillctl logout`
+
 Golden path
 - `ews_skillctl tools`
 - `ews_skillctl health`
@@ -80,6 +85,7 @@ Behavior notes
 - CLI search applies a default time window if `--date-from/--date-to` are omitted.
   - default: `30` days (`EWS_CLI_SEARCH_DEFAULT_DAYS`)
   - use `--no-date-limit` to disable per query
+- `MAIL_PROTOCOL=graph` currently supports read-path only (`health`, `list_folders`, `list`, `read`, `search`).
 
 Upgrade
 - Latest: `bash scripts/install.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill"`
