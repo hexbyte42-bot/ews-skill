@@ -41,6 +41,8 @@ enum Command {
     Doctor,
     Tools,
     Health,
+    ListServerFolders,
+    ListSyncedFolders,
     Call(CallArgs),
     List(ListArgs),
     Read(ReadArgs),
@@ -390,6 +392,38 @@ fn main() {
         Command::Health => match client.call_tool("email_health", json!({})) {
             Ok(data) => {
                 print_output(as_json, "health: ok", data);
+                Ok(())
+            }
+            Err(e) => Err(e),
+        },
+        Command::ListServerFolders => match client.call_tool("email_list_server_folders", json!({})) {
+            Ok(data) => {
+                if as_json {
+                    println!("{}", data);
+                } else {
+                    let count = data
+                        .get("folders")
+                        .and_then(Value::as_array)
+                        .map(|v| v.len())
+                        .unwrap_or(0);
+                    println!("server folders: {}", count);
+                }
+                Ok(())
+            }
+            Err(e) => Err(e),
+        },
+        Command::ListSyncedFolders => match client.call_tool("email_list_synced_folders", json!({})) {
+            Ok(data) => {
+                if as_json {
+                    println!("{}", data);
+                } else {
+                    let count = data
+                        .get("folders")
+                        .and_then(Value::as_array)
+                        .map(|v| v.len())
+                        .unwrap_or(0);
+                    println!("synced folders: {}", count);
+                }
                 Ok(())
             }
             Err(e) => Err(e),

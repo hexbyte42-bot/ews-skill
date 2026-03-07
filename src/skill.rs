@@ -39,7 +39,7 @@ impl EmailSkill {
         Self { service, runtime }
     }
 
-    pub fn list_folders(&self) -> ToolResult {
+    pub fn list_synced_folders(&self) -> ToolResult {
         let folders = self.service.list_folders();
         let data: Vec<_> = folders
             .iter()
@@ -54,6 +54,27 @@ impl EmailSkill {
             .collect();
 
         ToolResult::ok(json!({ "folders": data }))
+    }
+
+    pub fn list_server_folders(&self) -> ToolResult {
+        let result = self.runtime.block_on(self.service.list_server_folders());
+        match result {
+            Ok(folders) => {
+                let data: Vec<_> = folders
+                    .iter()
+                    .map(|f| {
+                        json!({
+                            "id": f.id,
+                            "display_name": f.display_name,
+                            "total_count": f.total_count,
+                            "unread_count": f.unread_count,
+                        })
+                    })
+                    .collect();
+                ToolResult::ok(json!({ "folders": data }))
+            }
+            Err(e) => ToolResult::err(e),
+        }
     }
 
     pub fn list_emails(
@@ -256,8 +277,17 @@ impl EmailSkill {
     pub fn get_tool_definitions() -> Vec<serde_json::Value> {
         vec![
             json!({
-                "name": "email_list_folders",
-                "description": "List all available email folders",
+                "name": "email_list_server_folders",
+                "description": "List folders directly from mail server",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }),
+            json!({
+                "name": "email_list_synced_folders",
+                "description": "List folders currently synced in local cache",
                 "parameters": {
                     "type": "object",
                     "properties": {},

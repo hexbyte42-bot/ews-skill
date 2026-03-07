@@ -55,7 +55,8 @@ CLI sanity checks:
 
 ## 4) Read-path functional checks
 
-- `email_list_folders` returns `inbox` and `sentitems`
+- `email_list_server_folders` returns `inbox` and `sentitems`
+- `email_list_synced_folders` returns currently cached/synced folders
 - `email_list` (`folder_name=inbox`) returns expected messages
 - `email_read` works for an ID from `email_list`
 - `email_mark_read` true/false succeeds

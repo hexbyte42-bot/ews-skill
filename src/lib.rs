@@ -24,6 +24,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 pub struct EwsSkill {
     email_skill: Option<Arc<Mutex<EmailSkill>>>,
     sync_engine: Option<SyncEngine>,
+    repository: Option<Repository>,
     graph_client: Option<GraphClient>,
     protocol: String,
     graph_auth: Option<GraphAuthConfig>,
@@ -47,6 +48,7 @@ impl EwsSkill {
                 config.graph.tenant_id, config.graph.client_id
             ))
             .map_err(|e| e.to_string())?;
+            let repository = Repository::new(db);
             let graph_auth = GraphAuthConfig {
                 tenant_id: config.graph.tenant_id.clone(),
                 client_id: config.graph.client_id.clone(),
@@ -55,6 +57,7 @@ impl EwsSkill {
             return Ok(Self {
                 email_skill: None,
                 sync_engine: None,
+                repository: Some(repository),
                 graph_client: Some(graph_client),
                 protocol: "graph".to_string(),
                 graph_auth: Some(graph_auth),
@@ -108,12 +111,13 @@ impl EwsSkill {
             }
         });
 
-        let email_service = EmailService::new(sync_engine.clone(), repository);
+        let email_service = EmailService::new(sync_engine.clone(), repository.clone());
         let email_skill = EmailSkill::new(email_service, runtime.clone());
 
         Ok(Self {
             email_skill: Some(Arc::new(Mutex::new(email_skill))),
             sync_engine: Some(sync_engine),
+            repository: Some(repository),
             graph_client: None,
             protocol: "ews".to_string(),
             graph_auth: None,
@@ -130,7 +134,7 @@ impl EwsSkill {
         Self::new(config)
     }
 
-    pub fn list_folders(&self) -> skill::ToolResult {
+    pub fn list_server_folders(&self) -> skill::ToolResult {
         if self.protocol == "graph" {
             return match self
                 .graph_client
@@ -153,9 +157,26 @@ impl EwsSkill {
         }
 
         match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
-            Some(skill) => skill.list_folders(),
+            Some(skill) => skill.list_server_folders(),
             None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
         }
+    }
+
+    pub fn list_synced_folders(&self) -> skill::ToolResult {
+        let repo = match self.repository.as_ref() {
+            Some(v) => v,
+            None => return skill::ToolResult::err("repository not initialized".to_string()),
+        };
+
+        let folders = repo.list_folders();
+        skill::ToolResult::ok(serde_json::json!({
+            "folders": folders.into_iter().map(|f| serde_json::json!({
+                "id": f.id,
+                "display_name": f.display_name,
+                "unread_count": f.unread_count,
+                "total_count": f.total_count,
+            })).collect::<Vec<_>>()
+        }))
     }
 
     pub fn list_emails(
@@ -466,7 +487,8 @@ impl EwsSkill {
     pub fn execute_tool(&self, tool_name: &str, args: Value) -> skill::ToolResult {
         match tool_name {
             "email_health" => self.health(),
-            "email_list_folders" => self.list_folders(),
+            "email_list_server_folders" => self.list_server_folders(),
+            "email_list_synced_folders" => self.list_synced_folders(),
             "email_list" => {
                 let folder_name = args
                     .get("folder_name")
