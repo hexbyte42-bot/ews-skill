@@ -423,14 +423,13 @@ fn matches_filter(email: &CachedEmail, options: &GraphSearchOptions) -> bool {
     }
 
     if let Some(query) = options.query.as_ref().filter(|v| !v.trim().is_empty()) {
-        let mut matched = contains_ci(&email.subject, query)
-            || contains_ci(&email.sender_email, query)
-            || contains_ci(&email.sender_name, query);
-        if options.include_body {
-            matched = matched || contains_ci(&email.body_text, query);
-        }
-        if !matched {
-            return false;
+        if !options.include_body {
+            let matched = contains_ci(&email.subject, query)
+                || contains_ci(&email.sender_email, query)
+                || contains_ci(&email.sender_name, query);
+            if !matched {
+                return false;
+            }
         }
     }
 
