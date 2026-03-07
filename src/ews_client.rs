@@ -335,10 +335,13 @@ impl EwsClient {
                         <FindFolder xmlns="http://schemas.microsoft.com/exchange/services/2006/messages" Traversal="Deep">
                             <FolderShape>
                                 <t:BaseShape>Default</t:BaseShape>
+                                <t:AdditionalProperties>
+                                    <t:FieldURI FieldURI="folder:IsHidden"/>
+                                </t:AdditionalProperties>
                             </FolderShape>
                             <IndexedPageFolderView MaxEntriesReturned="{}" Offset="{}" BasePoint="Beginning"/>
                             <ParentFolderIds>
-                                <t:DistinguishedFolderId Id="root"/>
+                                <t:DistinguishedFolderId Id="msgfolderroot"/>
                             </ParentFolderIds>
                         </FindFolder>
                 </soap:Body>
@@ -349,7 +352,12 @@ impl EwsClient {
             let xml = self.send_request_xml(body).await?;
             let page = parse_find_folder_page(&xml)?;
             let page_len = page.folders.len();
-            all.extend(page.folders);
+            let visible: Vec<Folder> = page
+                .folders
+                .into_iter()
+                .filter(|f| !f.is_hidden && is_user_visible_folder_name(&f.display_name))
+                .collect();
+            all.extend(visible);
 
             if page.includes_last_item_in_range || page_len == 0 {
                 break;
@@ -1219,6 +1227,9 @@ fn find_folder_in_xml(xml: &str, folder_name: &str) -> Option<Folder> {
                                 "UnreadCount" => {
                                     folder.unread_count = value.parse::<i32>().unwrap_or(0)
                                 }
+                                "IsHidden" => {
+                                    folder.is_hidden = value.eq_ignore_ascii_case("true")
+                                }
                                 _ => {}
                             }
                         }
@@ -1367,6 +1378,30 @@ fn is_folder_node(name: &str) -> bool {
         name,
         "Folder" | "SearchFolder" | "CalendarFolder" | "ContactsFolder" | "TasksFolder"
     )
+}
+
+fn is_user_visible_folder_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        return false;
+    }
+
+    let lowered = trimmed.to_ascii_lowercase();
+    !matches!(
+        lowered.as_str(),
+        "conversation action settings"
+            | "externalcontacts"
+            | "feeds"
+            | "inbound"
+            | "outbound"
+            | "gal contacts"
+            | "organizational contacts"
+            | "peoplecentricconversation buddies"
+            | "recipient cache"
+    ) && !lowered.contains("yammer")
 }
 
 mod soap {
@@ -1603,6 +1638,8 @@ pub struct Folder {
     pub total_count: i32,
     #[serde(rename = "UnreadCount", default)]
     pub unread_count: i32,
+    #[serde(rename = "IsHidden", default)]
+    pub is_hidden: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
