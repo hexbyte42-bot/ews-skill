@@ -125,25 +125,45 @@ impl GraphClient {
         limit: i32,
         unread_only: bool,
     ) -> Result<Vec<CachedEmail>, String> {
-        let folder_id = self.resolve_folder_id(folder_name)?;
-        let top = limit.clamp(1, 200);
-        let mut url = format!(
-            "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages?$top={}&$orderby=receivedDateTime%20desc",
-            folder_id, top
-        );
-        if unread_only {
-            url.push_str("&$filter=isRead%20eq%20false");
+        let folder_input = folder_name.trim();
+        if folder_input.is_empty() {
+            return Err("folder name cannot be empty".to_string());
         }
 
-        let response: GraphList<GraphMessage> = self
-            .request("GET", &url)?
-            .json()
-            .map_err(|e| e.to_string())?;
-        Ok(response
-            .value
-            .into_iter()
-            .map(|m| self.message_to_cached_email(m, &folder_id))
-            .collect())
+        let top = limit.clamp(1, 200);
+        let fetch = |folder_ref: &str| -> Result<Vec<CachedEmail>, String> {
+            let mut url = format!(
+                "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages?$top={}&$orderby=receivedDateTime%20desc",
+                folder_ref, top
+            );
+            if unread_only {
+                url.push_str("&$filter=isRead%20eq%20false");
+            }
+
+            let response: GraphList<GraphMessage> = self
+                .request("GET", &url)?
+                .json()
+                .map_err(|e| e.to_string())?;
+            Ok(response
+                .value
+                .into_iter()
+                .map(|m| self.message_to_cached_email(m, folder_ref))
+                .collect())
+        };
+
+        match fetch(folder_input) {
+            Ok(emails) => Ok(emails),
+            Err(err) => {
+                if !is_not_found_error(&err) {
+                    return Err(err);
+                }
+                let resolved = self.resolve_folder_id(folder_input)?;
+                if resolved.eq_ignore_ascii_case(folder_input) {
+                    return Err(err);
+                }
+                fetch(&resolved)
+            }
+        }
     }
 
     pub fn read_email(&self, id: &str) -> Result<CachedEmail, String> {
@@ -380,10 +400,6 @@ impl GraphClient {
             return Err("folder name cannot be empty".to_string());
         }
 
-        if is_probable_graph_folder_id(trimmed) {
-            return Ok(trimmed.to_string());
-        }
-
         let normalized = trimmed.to_ascii_lowercase();
         if is_well_known_folder_name(&normalized) {
             return Ok(normalized);
@@ -481,20 +497,6 @@ fn is_well_known_folder_name(value: &str) -> bool {
     )
 }
 
-fn is_probable_graph_folder_id(value: &str) -> bool {
-    value.starts_with("AAMk") || value.starts_with("AQMk") || is_guid_like(value)
-}
-
-fn is_guid_like(value: &str) -> bool {
-    let parts: Vec<&str> = value.split('-').collect();
-    if parts.len() != 5 {
-        return false;
-    }
-    let expected = [8, 4, 4, 4, 12];
-    for (idx, part) in parts.iter().enumerate() {
-        if part.len() != expected[idx] || !part.chars().all(|c| c.is_ascii_hexdigit()) {
-            return false;
-        }
-    }
-    true
+fn is_not_found_error(err: &str) -> bool {
+    err.contains("404") || err.to_ascii_lowercase().contains("not found")
 }
