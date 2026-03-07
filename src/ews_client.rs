@@ -1287,7 +1287,7 @@ fn parse_find_folder_page(xml: &str) -> Result<FindFolderPage, EwsError> {
                         let key = local_name(attr.key.as_ref());
                         let value = String::from_utf8_lossy(attr.value.as_ref()).to_string();
                         if key == "IncludesLastItemInRange" {
-                            includes_last = value.eq_ignore_ascii_case("true");
+                            includes_last = parse_xml_bool(&value);
                         } else if key == "IndexedPagingOffset" {
                             next_offset = value.parse::<usize>().ok();
                         }
@@ -1338,6 +1338,7 @@ fn parse_find_folder_page(xml: &str) -> Result<FindFolderPage, EwsError> {
                                 "UnreadCount" => {
                                     folder.unread_count = value.parse::<i32>().unwrap_or(0)
                                 }
+                                "IsHidden" => folder.is_hidden = parse_xml_bool(&value),
                                 _ => {}
                             }
                         }
@@ -1402,6 +1403,10 @@ fn is_user_visible_folder_name(name: &str) -> bool {
             | "peoplecentricconversation buddies"
             | "recipient cache"
     ) && !lowered.contains("yammer")
+}
+
+fn parse_xml_bool(value: &str) -> bool {
+    value.eq_ignore_ascii_case("true") || value == "1"
 }
 
 mod soap {
@@ -1761,6 +1766,7 @@ mod tests {
                                         <t:DisplayName>AllItems</t:DisplayName>
                                         <t:TotalCount>99</t:TotalCount>
                                         <t:UnreadCount>1</t:UnreadCount>
+                                        <t:IsHidden>true</t:IsHidden>
                                     </t:SearchFolder>
                                 </Folders>
                             </RootFolder>
@@ -1776,7 +1782,9 @@ mod tests {
         assert_eq!(page.folders.len(), 2);
         assert_eq!(page.folders[0].folder_id.id, "f1");
         assert_eq!(page.folders[0].display_name, "Inbox");
+        assert!(!page.folders[0].is_hidden);
         assert_eq!(page.folders[1].folder_id.id, "f2");
         assert_eq!(page.folders[1].display_name, "AllItems");
+        assert!(page.folders[1].is_hidden);
     }
 }
