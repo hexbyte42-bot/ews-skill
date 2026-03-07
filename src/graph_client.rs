@@ -93,24 +93,30 @@ impl GraphClient {
     }
 
     pub fn list_folders(&self) -> Result<Vec<GraphFolder>, String> {
-        let response: GraphList<GraphFolderItem> = self
-            .request(
-                "GET",
-                "https://graph.microsoft.com/v1.0/me/mailFolders?$top=100",
-            )?
-            .json()
-            .map_err(|e| e.to_string())?;
+        let mut url = "https://graph.microsoft.com/v1.0/me/mailFolders?$top=100".to_string();
+        let mut out = Vec::new();
 
-        Ok(response
-            .value
-            .into_iter()
-            .map(|f| GraphFolder {
+        loop {
+            let page: GraphList<GraphFolderItem> = self
+                .request("GET", &url)?
+                .json()
+                .map_err(|e| e.to_string())?;
+
+            out.extend(page.value.into_iter().map(|f| GraphFolder {
                 id: f.id,
                 display_name: f.display_name,
                 unread_count: f.unread_item_count,
                 total_count: f.total_item_count,
-            })
-            .collect())
+            }));
+
+            if let Some(next) = page.next_link {
+                url = next;
+            } else {
+                break;
+            }
+        }
+
+        Ok(out)
     }
 
     pub fn list_emails(
