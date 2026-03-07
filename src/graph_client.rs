@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashSet;
 
 #[derive(Clone)]
 pub struct GraphClient {
@@ -93,8 +94,11 @@ impl GraphClient {
     }
 
     pub fn list_folders(&self) -> Result<Vec<GraphFolder>, String> {
-        let mut url = "https://graph.microsoft.com/v1.0/me/mailFolders?$top=100".to_string();
+        let mut url =
+            "https://graph.microsoft.com/v1.0/me/mailFolders?$top=100&includeHiddenFolders=true"
+                .to_string();
         let mut out = Vec::new();
+        let mut seen = HashSet::new();
 
         loop {
             let page: GraphList<GraphFolderItem> = self
@@ -102,17 +106,40 @@ impl GraphClient {
                 .json()
                 .map_err(|e| e.to_string())?;
 
-            out.extend(page.value.into_iter().map(|f| GraphFolder {
-                id: f.id,
-                display_name: f.display_name,
-                unread_count: f.unread_item_count,
-                total_count: f.total_item_count,
-            }));
+            for f in page.value {
+                if seen.insert(f.id.clone()) {
+                    out.push(GraphFolder {
+                        id: f.id,
+                        display_name: f.display_name,
+                        unread_count: f.unread_item_count,
+                        total_count: f.total_item_count,
+                    });
+                }
+            }
 
             if let Some(next) = page.next_link {
                 url = next;
             } else {
                 break;
+            }
+        }
+
+        if out.is_empty() {
+            for id in [
+                "inbox",
+                "sentitems",
+                "drafts",
+                "deleteditems",
+                "junkemail",
+                "archive",
+                "outbox",
+                "conversationhistory",
+            ] {
+                if let Some(folder) = self.get_well_known_folder(id)? {
+                    if seen.insert(folder.id.clone()) {
+                        out.push(folder);
+                    }
+                }
             }
         }
 
@@ -359,6 +386,34 @@ impl GraphClient {
             .map_err(|e| e.to_string())?
             .error_for_status()
             .map_err(|e| e.to_string())
+    }
+
+    fn get_well_known_folder(&self, folder_id: &str) -> Result<Option<GraphFolder>, String> {
+        let url = format!(
+            "https://graph.microsoft.com/v1.0/me/mailFolders/{}",
+            folder_id
+        );
+        let response = self.request_raw("GET", &url)?;
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            let detail = response.text().unwrap_or_default();
+            return Err(format!(
+                "graph request failed ({}): {}",
+                status.as_u16(),
+                detail
+            ));
+        }
+
+        let f: GraphFolderItem = response.json().map_err(|e| e.to_string())?;
+        Ok(Some(GraphFolder {
+            id: f.id,
+            display_name: f.display_name,
+            unread_count: f.unread_item_count,
+            total_count: f.total_item_count,
+        }))
     }
 
     fn message_to_cached_email(&self, m: GraphMessage, folder_id: &str) -> CachedEmail {

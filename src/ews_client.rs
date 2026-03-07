@@ -341,25 +341,25 @@ impl EwsClient {
                                 <t:DistinguishedFolderId Id="root"/>
                             </ParentFolderIds>
                         </FindFolder>
-                    </soap:Body>
+                </soap:Body>
                 </soap:Envelope>"#,
                 page_size, offset
             );
 
-            let response: FindFolderResponse = self.send_request("FindFolder", body).await?;
-            let includes_last = response
-                .response_messages
-                .find_folder
-                .root_folder
-                .includes_last_item_in_range;
-            let mut page = response.response_messages.find_folder.root_folder.folders.folder;
-            let page_len = page.len();
-            all.append(&mut page);
+            let xml = self.send_request_xml(body).await?;
+            let page = parse_find_folder_page(&xml)?;
+            let page_len = page.folders.len();
+            all.extend(page.folders);
 
-            if includes_last || page_len == 0 || page_len < page_size {
+            if page.includes_last_item_in_range || page_len == 0 {
                 break;
             }
-            offset += page_len;
+
+            let next_offset = page.next_offset.unwrap_or(offset.saturating_add(page_len));
+            if next_offset <= offset {
+                break;
+            }
+            offset = next_offset;
         }
 
         Ok(all)
@@ -1247,6 +1247,121 @@ fn find_folder_in_xml(xml: &str, folder_name: &str) -> Option<Folder> {
     None
 }
 
+struct FindFolderPage {
+    folders: Vec<Folder>,
+    includes_last_item_in_range: bool,
+    next_offset: Option<usize>,
+}
+
+fn parse_find_folder_page(xml: &str) -> Result<FindFolderPage, EwsError> {
+    let mut reader = Reader::from_str(xml);
+    reader.trim_text(true);
+
+    let mut buf = Vec::new();
+    let mut current_tag = String::new();
+    let mut current_folder: Option<Folder> = None;
+    let mut in_folder_node = false;
+    let mut folders = Vec::new();
+    let mut includes_last = true;
+    let mut next_offset = None;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let name = local_name(e.name().as_ref()).to_string();
+                current_tag = name.clone();
+
+                if name == "RootFolder" {
+                    for attr in e.attributes().flatten() {
+                        let key = local_name(attr.key.as_ref());
+                        let value = String::from_utf8_lossy(attr.value.as_ref()).to_string();
+                        if key == "IncludesLastItemInRange" {
+                            includes_last = value.eq_ignore_ascii_case("true");
+                        } else if key == "IndexedPagingOffset" {
+                            next_offset = value.parse::<usize>().ok();
+                        }
+                    }
+                } else if is_folder_node(&name) {
+                    in_folder_node = true;
+                    current_folder = Some(Folder::default());
+                } else if in_folder_node && name == "FolderId" {
+                    if let Some(folder) = current_folder.as_mut() {
+                        for attr in e.attributes().flatten() {
+                            let key = local_name(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(attr.value.as_ref()).to_string();
+                            if key == "Id" {
+                                folder.folder_id.id = value;
+                            } else if key == "ChangeKey" {
+                                folder.folder_id.change_key = value;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let name = local_name(e.name().as_ref()).to_string();
+                if in_folder_node && name == "FolderId" {
+                    if let Some(folder) = current_folder.as_mut() {
+                        for attr in e.attributes().flatten() {
+                            let key = local_name(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(attr.value.as_ref()).to_string();
+                            if key == "Id" {
+                                folder.folder_id.id = value;
+                            } else if key == "ChangeKey" {
+                                folder.folder_id.change_key = value;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if in_folder_node {
+                    if let Some(folder) = current_folder.as_mut() {
+                        if let Ok(text) = e.unescape() {
+                            let value = text.into_owned();
+                            match current_tag.as_str() {
+                                "DisplayName" => folder.display_name = value,
+                                "TotalCount" => {
+                                    folder.total_count = value.parse::<i32>().unwrap_or(0)
+                                }
+                                "UnreadCount" => {
+                                    folder.unread_count = value.parse::<i32>().unwrap_or(0)
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = local_name(e.name().as_ref()).to_string();
+                if in_folder_node && is_folder_node(&name) {
+                    if let Some(folder) = current_folder.take() {
+                        folders.push(folder);
+                    }
+                    in_folder_node = false;
+                }
+                current_tag.clear();
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => {
+                return Err(EwsError::XmlError(format!(
+                    "failed to parse FindFolder page: {}",
+                    e
+                )))
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(FindFolderPage {
+        folders,
+        includes_last_item_in_range: includes_last,
+        next_offset,
+    })
+}
+
 fn is_folder_node(name: &str) -> bool {
     matches!(
         name,
@@ -1582,4 +1697,49 @@ pub struct ItemId {
     pub id: String,
     #[serde(rename = "@ChangeKey", default)]
     pub change_key: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_find_folder_page_handles_multiple_folder_nodes() {
+        let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+            <soap:Body>
+                <FindFolderResponse xmlns="http://schemas.microsoft.com/exchange/services/2006/messages">
+                    <ResponseMessages>
+                        <FindFolderResponseMessage>
+                            <RootFolder IncludesLastItemInRange="false" IndexedPagingOffset="2">
+                                <Folders xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+                                    <t:Folder>
+                                        <t:FolderId Id="f1" ChangeKey="ck1"/>
+                                        <t:DisplayName>Inbox</t:DisplayName>
+                                        <t:TotalCount>10</t:TotalCount>
+                                        <t:UnreadCount>3</t:UnreadCount>
+                                    </t:Folder>
+                                    <t:SearchFolder>
+                                        <t:FolderId Id="f2" ChangeKey="ck2"/>
+                                        <t:DisplayName>AllItems</t:DisplayName>
+                                        <t:TotalCount>99</t:TotalCount>
+                                        <t:UnreadCount>1</t:UnreadCount>
+                                    </t:SearchFolder>
+                                </Folders>
+                            </RootFolder>
+                        </FindFolderResponseMessage>
+                    </ResponseMessages>
+                </FindFolderResponse>
+            </soap:Body>
+        </soap:Envelope>"#;
+
+        let page = parse_find_folder_page(xml).expect("parse should succeed");
+        assert!(!page.includes_last_item_in_range);
+        assert_eq!(page.next_offset, Some(2));
+        assert_eq!(page.folders.len(), 2);
+        assert_eq!(page.folders[0].folder_id.id, "f1");
+        assert_eq!(page.folders[0].display_name, "Inbox");
+        assert_eq!(page.folders[1].folder_id.id, "f2");
+        assert_eq!(page.folders[1].display_name, "AllItems");
+    }
 }
