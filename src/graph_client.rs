@@ -131,7 +131,7 @@ impl GraphClient {
         }
 
         let top = limit.clamp(1, 200);
-        let fetch = |folder_ref: &str| -> Result<Vec<CachedEmail>, String> {
+        let fetch = |folder_ref: &str| -> Result<Vec<CachedEmail>, (bool, String)> {
             let mut url = format!(
                 "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages?$top={}&$orderby=receivedDateTime%20desc",
                 folder_ref, top
@@ -140,10 +140,18 @@ impl GraphClient {
                 url.push_str("&$filter=isRead%20eq%20false");
             }
 
-            let response: GraphList<GraphMessage> = self
-                .request("GET", &url)?
-                .json()
-                .map_err(|e| e.to_string())?;
+            let response = self.request_raw("GET", &url).map_err(|e| (false, e))?;
+            let status = response.status();
+            if !status.is_success() {
+                let detail = response.text().unwrap_or_default();
+                return Err((
+                    status == reqwest::StatusCode::NOT_FOUND,
+                    format!("graph request failed ({}): {}", status.as_u16(), detail),
+                ));
+            }
+
+            let response: GraphList<GraphMessage> =
+                response.json().map_err(|e| (false, e.to_string()))?;
             Ok(response
                 .value
                 .into_iter()
@@ -153,15 +161,15 @@ impl GraphClient {
 
         match fetch(folder_input) {
             Ok(emails) => Ok(emails),
-            Err(err) => {
-                if !is_not_found_error(&err) {
+            Err((not_found, err)) => {
+                if !not_found || is_probable_graph_folder_id(folder_input) {
                     return Err(err);
                 }
                 let resolved = self.resolve_folder_id(folder_input)?;
                 if resolved.eq_ignore_ascii_case(folder_input) {
                     return Err(err);
                 }
-                fetch(&resolved)
+                fetch(&resolved).map_err(|(_, e)| e)
             }
         }
     }
@@ -292,7 +300,22 @@ impl GraphClient {
         self.request_with_header(method, url, None)
     }
 
+    fn request_raw(&self, method: &str, url: &str) -> Result<reqwest::blocking::Response, String> {
+        self.request_with_header_raw(method, url, None)
+    }
+
     fn request_with_header(
+        &self,
+        method: &str,
+        url: &str,
+        header: Option<(&str, &str)>,
+    ) -> Result<reqwest::blocking::Response, String> {
+        self.request_with_header_raw(method, url, header)?
+            .error_for_status()
+            .map_err(|e| e.to_string())
+    }
+
+    fn request_with_header_raw(
         &self,
         method: &str,
         url: &str,
@@ -313,10 +336,7 @@ impl GraphClient {
             req = req.header(k, v);
         }
 
-        req.send()
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())
+        req.send().map_err(|e| e.to_string())
     }
 
     fn request_with_json(
@@ -497,6 +517,6 @@ fn is_well_known_folder_name(value: &str) -> bool {
     )
 }
 
-fn is_not_found_error(err: &str) -> bool {
-    err.contains("404") || err.to_ascii_lowercase().contains("not found")
+fn is_probable_graph_folder_id(value: &str) -> bool {
+    (value.starts_with("AAMk") || value.starts_with("AQMk")) && value.len() >= 40
 }
