@@ -308,7 +308,8 @@ If you are not using OpenClaw external process mode, the crate still exposes `Ew
 ## Exposed tools
 
 - `email_health`
-- `email_list_folders`
+- `email_list_server_folders`
+- `email_list_synced_folders`
 - `email_list`
 - `email_read`
 - `email_search`
@@ -323,7 +324,7 @@ If you are not using OpenClaw external process mode, the crate still exposes `Ew
 Protocol note:
 
 - `MAIL_PROTOCOL=ews`: full current functionality.
-- `MAIL_PROTOCOL=graph`: delegated auth + tool parity is available for `health/list_folders/list/read/search/send/move/delete/mark_read`.
+- `MAIL_PROTOCOL=graph`: delegated auth + tool parity is available for `health/list_server_folders/list_synced_folders/list/read/search/send/move/delete/mark_read`.
 - In Graph mode, `email_sync_now` is a no-op success because reads are live API queries.
 
 `email_delete` behavior:

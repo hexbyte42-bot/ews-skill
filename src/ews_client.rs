@@ -318,6 +318,30 @@ impl EwsClient {
         Ok(find_folder_in_xml(&xml, folder_name))
     }
 
+    pub async fn list_server_folders(&self) -> Result<Vec<Folder>, EwsError> {
+        let body = r#"<?xml version="1.0" encoding="utf-8"?>
+            <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+                          xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+                <soap:Header>
+                    <t:RequestServerVersion Version="Exchange2016"/>
+                </soap:Header>
+                <soap:Body>
+                    <FindFolder xmlns="http://schemas.microsoft.com/exchange/services/2006/messages" Traversal="Deep">
+                        <FolderShape>
+                            <t:BaseShape>Default</t:BaseShape>
+                        </FolderShape>
+                        <IndexedPageFolderView MaxEntriesReturned="1000" Offset="0" BasePoint="Beginning"/>
+                        <ParentFolderIds>
+                            <t:DistinguishedFolderId Id="root"/>
+                        </ParentFolderIds>
+                    </FindFolder>
+                </soap:Body>
+            </soap:Envelope>"#;
+
+        let response: FindFolderResponse = self.send_request("FindFolder", body.to_string()).await?;
+        Ok(response.response_messages.find_folder.root_folder.folders.folder)
+    }
+
     pub async fn get_item(&self, item_id: &str) -> Result<Email, EwsError> {
         let safe_item_id = escape_xml(item_id);
         let body = format!(

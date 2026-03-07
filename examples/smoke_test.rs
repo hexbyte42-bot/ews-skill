@@ -143,8 +143,11 @@ fn main() {
     let sync = skill.sync();
     print_result("sync", &sync);
 
-    let folders = skill.list_folders();
-    print_result("list_folders", &folders);
+    let server_folders = skill.list_server_folders();
+    print_result("list_server_folders", &server_folders);
+
+    let synced_folders = skill.list_synced_folders();
+    print_result("list_synced_folders", &synced_folders);
 
     let list = skill.list_emails(Some(folder.clone()), Some(limit), Some(false));
     print_result("list_emails", &list);

@@ -1,5 +1,6 @@
 use crate::cache::{CachedEmail, CachedFolder, Repository};
 use crate::sync_engine::SyncEngine;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::error;
@@ -54,6 +55,28 @@ impl EmailService {
 
     pub fn list_folders(&self) -> Vec<CachedFolder> {
         self.repository.list_folders()
+    }
+
+    pub async fn list_server_folders(&self) -> Result<Vec<CachedFolder>, String> {
+        let folders = self
+            .sync_engine
+            .get_client()
+            .list_server_folders()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(folders
+            .into_iter()
+            .map(|f| CachedFolder {
+                id: f.folder_id.id,
+                change_key: Some(f.folder_id.change_key),
+                parent_id: None,
+                display_name: f.display_name,
+                unread_count: f.unread_count,
+                total_count: f.total_count,
+                synced_at: Utc::now(),
+            })
+            .collect())
     }
 
     pub fn get_folder(&self, folder_name: &str) -> Option<CachedFolder> {
