@@ -380,6 +380,10 @@ impl GraphClient {
             return Err("folder name cannot be empty".to_string());
         }
 
+        if is_probable_graph_folder_id(trimmed) {
+            return Ok(trimmed.to_string());
+        }
+
         let normalized = trimmed.to_ascii_lowercase();
         if is_well_known_folder_name(&normalized) {
             return Ok(normalized);
@@ -475,4 +479,25 @@ fn is_well_known_folder_name(value: &str) -> bool {
             | "syncissues"
             | "allitems"
     )
+}
+
+fn is_probable_graph_folder_id(value: &str) -> bool {
+    value.starts_with("AAMk")
+        || value.starts_with("AQMk")
+        || value.contains('=')
+        || is_guid_like(value)
+}
+
+fn is_guid_like(value: &str) -> bool {
+    let parts: Vec<&str> = value.split('-').collect();
+    if parts.len() != 5 {
+        return false;
+    }
+    let expected = [8, 4, 4, 4, 12];
+    for (idx, part) in parts.iter().enumerate() {
+        if part.len() != expected[idx] || !part.chars().all(|c| c.is_ascii_hexdigit()) {
+            return false;
+        }
+    }
+    true
 }
