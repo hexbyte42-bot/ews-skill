@@ -12,7 +12,7 @@ use config::Config;
 use email_service::EmailService;
 use ews_client::{ntlm_supported, EwsClient, EwsClientOptions};
 use graph_auth::{token_state, GraphAuthConfig};
-use graph_client::GraphClient;
+use graph_client::{GraphClient, GraphSearchOptions};
 use serde_json::Value;
 use skill::EmailSkill;
 use std::sync::{Arc, Mutex};
@@ -246,13 +246,37 @@ impl EwsSkill {
                 Some(c) => c,
                 None => return skill::ToolResult::err("graph client not initialized".to_string()),
             };
-            let q = query.or(subject).or(sender).unwrap_or_default();
-            if q.trim().is_empty() {
+            let has_filter = query.as_ref().is_some_and(|v| !v.trim().is_empty())
+                || subject.as_ref().is_some_and(|v| !v.trim().is_empty())
+                || sender.as_ref().is_some_and(|v| !v.trim().is_empty())
+                || date_from.as_ref().is_some_and(|v| !v.trim().is_empty())
+                || date_to.as_ref().is_some_and(|v| !v.trim().is_empty())
+                || folder_name.as_ref().is_some_and(|v| !v.trim().is_empty());
+            if !has_filter {
                 return skill::ToolResult::err(
-                    "graph search currently requires one textual filter".to_string(),
+                    "at least one search filter is required (query, subject, sender, date_from, date_to, folder_name)".to_string(),
                 );
             }
-            return match client.search_emails(&q, limit.unwrap_or(50)) {
+
+            let date_from_parsed = match date_from.as_deref().map(parse_rfc3339_utc).transpose() {
+                Ok(v) => v,
+                Err(e) => return skill::ToolResult::err(format!("invalid date_from: {}", e)),
+            };
+            let date_to_parsed = match date_to.as_deref().map(parse_rfc3339_utc).transpose() {
+                Ok(v) => v,
+                Err(e) => return skill::ToolResult::err(format!("invalid date_to: {}", e)),
+            };
+
+            return match client.search_emails(GraphSearchOptions {
+                query,
+                subject,
+                sender,
+                date_from: date_from_parsed,
+                date_to: date_to_parsed,
+                folder_name,
+                limit: limit.unwrap_or(50).clamp(1, 200),
+                include_body: include_body.unwrap_or(true),
+            }) {
                 Ok(results) => skill::ToolResult::ok(serde_json::json!({
                     "results": results.into_iter().map(|e| serde_json::json!({
                         "id": e.id,
@@ -311,10 +335,14 @@ impl EwsSkill {
 
     pub fn mark_read(&self, email_id: String, is_read: bool) -> skill::ToolResult {
         if self.protocol == "graph" {
-            return skill::ToolResult::err(format!(
-                "graph backend write operation not implemented yet: mark_read({}, {})",
-                email_id, is_read
-            ));
+            let client = match self.graph_client.as_ref() {
+                Some(c) => c,
+                None => return skill::ToolResult::err("graph client not initialized".to_string()),
+            };
+            return match client.mark_read(&email_id, is_read) {
+                Ok(_) => skill::ToolResult::ok(serde_json::json!({"message": "Email marked"})),
+                Err(e) => skill::ToolResult::err(e),
+            };
         }
         match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
             Some(skill) => skill.mark_read(email_id, is_read),
@@ -324,10 +352,14 @@ impl EwsSkill {
 
     pub fn send(&self, to: String, subject: String, body: String) -> skill::ToolResult {
         if self.protocol == "graph" {
-            return skill::ToolResult::err(format!(
-                "graph backend write operation not implemented yet: send({}, {}, <body>)",
-                to, subject
-            ));
+            let client = match self.graph_client.as_ref() {
+                Some(c) => c,
+                None => return skill::ToolResult::err("graph client not initialized".to_string()),
+            };
+            return match client.send_email(&to, &subject, &body) {
+                Ok(_) => skill::ToolResult::ok(serde_json::json!({"message": "Email sent"})),
+                Err(e) => skill::ToolResult::err(e),
+            };
         }
         match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
             Some(skill) => skill.send_email(to, subject, body),
@@ -337,10 +369,14 @@ impl EwsSkill {
 
     pub fn move_email(&self, email_id: String, destination_folder: String) -> skill::ToolResult {
         if self.protocol == "graph" {
-            return skill::ToolResult::err(format!(
-                "graph backend write operation not implemented yet: move({}, {})",
-                email_id, destination_folder
-            ));
+            let client = match self.graph_client.as_ref() {
+                Some(c) => c,
+                None => return skill::ToolResult::err("graph client not initialized".to_string()),
+            };
+            return match client.move_email(&email_id, &destination_folder) {
+                Ok(new_id) => skill::ToolResult::ok(serde_json::json!({"new_id": new_id})),
+                Err(e) => skill::ToolResult::err(e),
+            };
         }
         match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
             Some(skill) => skill.move_email(email_id, destination_folder),
@@ -350,10 +386,14 @@ impl EwsSkill {
 
     pub fn delete(&self, email_id: String, skip_trash: bool) -> skill::ToolResult {
         if self.protocol == "graph" {
-            return skill::ToolResult::err(format!(
-                "graph backend write operation not implemented yet: delete({}, skip_trash={})",
-                email_id, skip_trash
-            ));
+            let client = match self.graph_client.as_ref() {
+                Some(c) => c,
+                None => return skill::ToolResult::err("graph client not initialized".to_string()),
+            };
+            return match client.delete_email(&email_id, skip_trash) {
+                Ok(_) => skill::ToolResult::ok(serde_json::json!({"message": "Email deleted"})),
+                Err(e) => skill::ToolResult::err(e),
+            };
         }
         match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
             Some(skill) => skill.delete_email(email_id, skip_trash),
@@ -363,9 +403,9 @@ impl EwsSkill {
 
     pub fn sync(&self) -> skill::ToolResult {
         if self.protocol == "graph" {
-            return skill::ToolResult::err(
-                "graph backend sync_now is not implemented yet".to_string(),
-            );
+            return skill::ToolResult::ok(serde_json::json!({
+                "message": "Graph mode uses live API reads; explicit cache sync is not required"
+            }));
         }
         match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
             Some(skill) => skill.sync_now(),
@@ -375,10 +415,9 @@ impl EwsSkill {
 
     pub fn add_folder(&self, folder_name: String) -> skill::ToolResult {
         if self.protocol == "graph" {
-            return skill::ToolResult::err(format!(
-                "graph backend add_folder is not implemented yet: {}",
-                folder_name
-            ));
+            return skill::ToolResult::ok(serde_json::json!({
+                "message": format!("Graph mode does not require folder enrollment; requested '{}'", folder_name)
+            }));
         }
         match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
             Some(skill) => skill.add_folder(folder_name),
@@ -605,4 +644,10 @@ impl Drop for EwsSkill {
             sync_engine.stop_polling();
         }
     }
+}
+
+fn parse_rfc3339_utc(value: &str) -> Result<chrono::DateTime<chrono::Utc>, String> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|v| v.with_timezone(&chrono::Utc))
+        .map_err(|e| e.to_string())
 }

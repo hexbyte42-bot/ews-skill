@@ -323,8 +323,8 @@ If you are not using OpenClaw external process mode, the crate still exposes `Ew
 Protocol note:
 
 - `MAIL_PROTOCOL=ews`: full current functionality.
-- `MAIL_PROTOCOL=graph`: delegated auth + read-path (`health`, `list_folders`, `list`, `read`, `search`) is available.
-- Graph write-path (`send/move/delete/mark_read/sync`) is not implemented yet in this release.
+- `MAIL_PROTOCOL=graph`: delegated auth + tool parity is available for `health/list_folders/list/read/search/send/move/delete/mark_read`.
+- In Graph mode, `email_sync_now` is a no-op success because reads are live API queries.
 
 `email_delete` behavior:
 
