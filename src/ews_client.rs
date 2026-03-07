@@ -319,27 +319,50 @@ impl EwsClient {
     }
 
     pub async fn list_server_folders(&self) -> Result<Vec<Folder>, EwsError> {
-        let body = r#"<?xml version="1.0" encoding="utf-8"?>
-            <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-                          xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
-                <soap:Header>
-                    <t:RequestServerVersion Version="Exchange2016"/>
-                </soap:Header>
-                <soap:Body>
-                    <FindFolder xmlns="http://schemas.microsoft.com/exchange/services/2006/messages" Traversal="Deep">
-                        <FolderShape>
-                            <t:BaseShape>Default</t:BaseShape>
-                        </FolderShape>
-                        <IndexedPageFolderView MaxEntriesReturned="1000" Offset="0" BasePoint="Beginning"/>
-                        <ParentFolderIds>
-                            <t:DistinguishedFolderId Id="root"/>
-                        </ParentFolderIds>
-                    </FindFolder>
-                </soap:Body>
-            </soap:Envelope>"#;
+        let page_size = 1000usize;
+        let mut offset = 0usize;
+        let mut all = Vec::new();
 
-        let response: FindFolderResponse = self.send_request("FindFolder", body.to_string()).await?;
-        Ok(response.response_messages.find_folder.root_folder.folders.folder)
+        loop {
+            let body = format!(
+                r#"<?xml version="1.0" encoding="utf-8"?>
+                <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+                              xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+                    <soap:Header>
+                        <t:RequestServerVersion Version="Exchange2016"/>
+                    </soap:Header>
+                    <soap:Body>
+                        <FindFolder xmlns="http://schemas.microsoft.com/exchange/services/2006/messages" Traversal="Deep">
+                            <FolderShape>
+                                <t:BaseShape>Default</t:BaseShape>
+                            </FolderShape>
+                            <IndexedPageFolderView MaxEntriesReturned="{}" Offset="{}" BasePoint="Beginning"/>
+                            <ParentFolderIds>
+                                <t:DistinguishedFolderId Id="root"/>
+                            </ParentFolderIds>
+                        </FindFolder>
+                    </soap:Body>
+                </soap:Envelope>"#,
+                page_size, offset
+            );
+
+            let response: FindFolderResponse = self.send_request("FindFolder", body).await?;
+            let includes_last = response
+                .response_messages
+                .find_folder
+                .root_folder
+                .includes_last_item_in_range;
+            let mut page = response.response_messages.find_folder.root_folder.folders.folder;
+            let page_len = page.len();
+            all.append(&mut page);
+
+            if includes_last || page_len == 0 || page_len < page_size {
+                break;
+            }
+            offset += page_len;
+        }
+
+        Ok(all)
     }
 
     pub async fn get_item(&self, item_id: &str) -> Result<Email, EwsError> {
@@ -1335,6 +1358,8 @@ pub struct FindFolderResponseMessage {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RootFolder {
+    #[serde(rename = "@IncludesLastItemInRange", default)]
+    pub includes_last_item_in_range: bool,
     #[serde(rename = "Folders")]
     pub folders: FolderCollection,
 }
