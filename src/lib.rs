@@ -246,6 +246,18 @@ impl EwsSkill {
                 Some(c) => c,
                 None => return skill::ToolResult::err("graph client not initialized".to_string()),
             };
+            let has_filter = query.as_ref().is_some_and(|v| !v.trim().is_empty())
+                || subject.as_ref().is_some_and(|v| !v.trim().is_empty())
+                || sender.as_ref().is_some_and(|v| !v.trim().is_empty())
+                || date_from.as_ref().is_some_and(|v| !v.trim().is_empty())
+                || date_to.as_ref().is_some_and(|v| !v.trim().is_empty())
+                || folder_name.as_ref().is_some_and(|v| !v.trim().is_empty());
+            if !has_filter {
+                return skill::ToolResult::err(
+                    "at least one search filter is required (query, subject, sender, date_from, date_to, folder_name)".to_string(),
+                );
+            }
+
             let date_from_parsed = match date_from.as_deref().map(parse_rfc3339_utc).transpose() {
                 Ok(v) => v,
                 Err(e) => return skill::ToolResult::err(format!("invalid date_from: {}", e)),
