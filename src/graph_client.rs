@@ -154,12 +154,14 @@ impl GraphClient {
     pub fn search_emails(&self, options: GraphSearchOptions) -> Result<Vec<CachedEmail>, String> {
         let limit = options.limit.clamp(1, 200) as usize;
         let top_per_page = 200;
-
-        let base_url = if let Some(folder) = options
+        let resolved_folder = options
             .folder_name
             .as_ref()
             .filter(|v| !v.trim().is_empty())
-        {
+            .map(|v| self.resolve_folder_id(v))
+            .transpose()?;
+
+        let base_url = if let Some(folder) = resolved_folder.as_deref() {
             format!(
                 "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages",
                 folder
@@ -192,11 +194,7 @@ impl GraphClient {
                     .map_err(|e| e.to_string())?
             };
 
-            let folder_for_map = options
-                .folder_name
-                .as_deref()
-                .filter(|v| !v.trim().is_empty())
-                .unwrap_or("inbox");
+            let folder_for_map = resolved_folder.as_deref().unwrap_or("inbox");
 
             for msg in page.value {
                 let email = self.message_to_cached_email(msg, folder_for_map);
@@ -243,9 +241,10 @@ impl GraphClient {
     }
 
     pub fn move_email(&self, id: &str, destination_folder: &str) -> Result<String, String> {
+        let destination_id = self.resolve_folder_id(destination_folder)?;
         let url = format!("https://graph.microsoft.com/v1.0/me/messages/{}/move", id);
         let msg: GraphMessage = self
-            .request_with_json("POST", &url, json!({"destinationId": destination_folder}))?
+            .request_with_json("POST", &url, json!({"destinationId": destination_id}))?
             .json()
             .map_err(|e| e.to_string())?;
         Ok(msg.id)
@@ -367,6 +366,27 @@ impl GraphClient {
             cached_at: Utc::now(),
         }
     }
+
+    fn resolve_folder_id(&self, folder: &str) -> Result<String, String> {
+        let trimmed = folder.trim();
+        if trimmed.is_empty() {
+            return Err("folder name cannot be empty".to_string());
+        }
+
+        let normalized = trimmed.to_ascii_lowercase();
+        if is_well_known_folder_name(&normalized) {
+            return Ok(normalized);
+        }
+
+        let folders = self.list_folders()?;
+        if let Some(found) = folders.into_iter().find(|f| {
+            f.id.eq_ignore_ascii_case(trimmed) || f.display_name.eq_ignore_ascii_case(trimmed)
+        }) {
+            return Ok(found.id);
+        }
+
+        Ok(trimmed.to_string())
+    }
 }
 
 fn recipients_to_vec(values: Option<Vec<GraphRecipient>>) -> Vec<String> {
@@ -425,4 +445,28 @@ fn matches_filter(email: &CachedEmail, options: &GraphSearchOptions) -> bool {
 
 fn contains_ci(hay: &str, needle: &str) -> bool {
     hay.to_lowercase().contains(&needle.to_lowercase())
+}
+
+fn is_well_known_folder_name(value: &str) -> bool {
+    matches!(
+        value,
+        "archive"
+            | "clutter"
+            | "conflicts"
+            | "conversationhistory"
+            | "deleteditems"
+            | "drafts"
+            | "inbox"
+            | "junkemail"
+            | "localfailures"
+            | "msgfolderroot"
+            | "outbox"
+            | "recoverableitemsdeletions"
+            | "scheduled"
+            | "searchfolders"
+            | "sentitems"
+            | "serverfailures"
+            | "syncissues"
+            | "allitems"
+    )
 }
