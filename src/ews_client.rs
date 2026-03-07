@@ -1494,38 +1494,6 @@ pub struct FoldersResponse {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct FindFolderResponse {
-    #[serde(rename = "ResponseMessages")]
-    pub response_messages: FindFolderResponseMessages,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct FindFolderResponseMessages {
-    #[serde(rename = "FindFolderResponseMessage")]
-    pub find_folder: FindFolderResponseMessage,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct FindFolderResponseMessage {
-    #[serde(rename = "RootFolder")]
-    pub root_folder: RootFolder,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct RootFolder {
-    #[serde(rename = "@IncludesLastItemInRange", default)]
-    pub includes_last_item_in_range: bool,
-    #[serde(rename = "Folders")]
-    pub folders: FolderCollection,
-}
-
-#[derive(Debug, Deserialize, Serialize, Default)]
-pub struct FolderCollection {
-    #[serde(rename = "Folder", default)]
-    pub folder: Vec<Folder>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
 pub struct GetItemResponse {
     #[serde(rename = "ResponseMessages")]
     pub response_messages: GetItemResponseMessages,
