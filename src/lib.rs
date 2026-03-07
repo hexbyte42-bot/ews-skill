@@ -345,7 +345,7 @@ impl EwsSkill {
                 None => return skill::ToolResult::err("graph client not initialized".to_string()),
             };
             return match client.send_email(&to, &subject, &body) {
-                Ok(_) => skill::ToolResult::ok(serde_json::json!({"id": "graph-sent"})),
+                Ok(_) => skill::ToolResult::ok(serde_json::json!({"message": "Email sent"})),
                 Err(e) => skill::ToolResult::err(e),
             };
         }
