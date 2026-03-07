@@ -482,10 +482,7 @@ fn is_well_known_folder_name(value: &str) -> bool {
 }
 
 fn is_probable_graph_folder_id(value: &str) -> bool {
-    value.starts_with("AAMk")
-        || value.starts_with("AQMk")
-        || value.contains('=')
-        || is_guid_like(value)
+    value.starts_with("AAMk") || value.starts_with("AQMk") || is_guid_like(value)
 }
 
 fn is_guid_like(value: &str) -> bool {
