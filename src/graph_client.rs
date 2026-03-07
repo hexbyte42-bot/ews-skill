@@ -125,10 +125,11 @@ impl GraphClient {
         limit: i32,
         unread_only: bool,
     ) -> Result<Vec<CachedEmail>, String> {
+        let folder_id = self.resolve_folder_id(folder_name)?;
         let top = limit.clamp(1, 200);
         let mut url = format!(
             "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages?$top={}&$orderby=receivedDateTime%20desc",
-            folder_name, top
+            folder_id, top
         );
         if unread_only {
             url.push_str("&$filter=isRead%20eq%20false");
@@ -141,7 +142,7 @@ impl GraphClient {
         Ok(response
             .value
             .into_iter()
-            .map(|m| self.message_to_cached_email(m, folder_name))
+            .map(|m| self.message_to_cached_email(m, &folder_id))
             .collect())
     }
 
