@@ -199,7 +199,17 @@ impl Client {
 
         for attempt in 0..=max_retries {
             match self.send_request_once(request) {
-                Ok(v) => return Ok(v),
+                Ok(v) => {
+                    if attempt < max_retries {
+                        if let Some(retry_after_ms) = server_busy_retry_ms(&v) {
+                            let wait_ms = retry_after_ms.max(backoff_ms).min(2000);
+                            sleep(Duration::from_millis(wait_ms));
+                            backoff_ms = (backoff_ms * 2).min(600);
+                            continue;
+                        }
+                    }
+                    return Ok(v);
+                }
                 Err(e) => {
                     last_err = e;
                     if attempt < max_retries && is_retryable_socket_error(&last_err) {
@@ -246,6 +256,29 @@ fn is_retryable_socket_error(message: &str) -> bool {
     message.contains("Resource temporarily unavailable")
         || message.contains("temporarily unavailable")
         || message.contains("WouldBlock")
+}
+
+fn server_busy_retry_ms(response: &Value) -> Option<u64> {
+    let error = response.get("error")?;
+    let code = error
+        .get("code")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if code != -32010 && !message.contains("server busy") {
+        return None;
+    }
+
+    error
+        .get("data")
+        .and_then(|v| v.get("retry_after_ms"))
+        .and_then(Value::as_u64)
+        .or(Some(250))
 }
 
 fn output_json(cli: &Cli) -> bool {
