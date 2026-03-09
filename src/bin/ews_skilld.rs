@@ -8,6 +8,9 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, TrySendError};
+use std::sync::Arc;
+use std::thread;
 use tracing::{error, info, warn};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -24,6 +27,8 @@ struct RpcRequest {
 struct RpcError {
     code: i32,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,6 +58,8 @@ struct CliOptions {
     config_path: Option<PathBuf>,
     transport: Transport,
 }
+
+const RPC_SERVER_BUSY_CODE: i32 = -32010;
 
 fn main() {
     let _log_guard = init_daemon_logging();
@@ -85,10 +92,11 @@ fn main() {
             std::process::exit(2);
         }
     };
+    let skill = Arc::new(skill);
 
     let Transport::Unix(socket_path) = options.transport;
     info!(socket = %socket_path.display(), "ews_skilld started (unix socket JSON-RPC)");
-    if let Err(e) = run_unix_socket(&skill, &socket_path) {
+    if let Err(e) = run_unix_socket(skill, &socket_path) {
         error!("unix socket server failed: {}", e);
         std::process::exit(2);
     }
@@ -135,7 +143,7 @@ fn parse_cli_options() -> Result<CliOptions, String> {
     })
 }
 
-fn run_unix_socket(skill: &EwsSkill, socket_path: &Path) -> Result<(), String> {
+fn run_unix_socket(skill: Arc<EwsSkill>, socket_path: &Path) -> Result<(), String> {
     if let Some(parent) = socket_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -148,13 +156,62 @@ fn run_unix_socket(skill: &EwsSkill, socket_path: &Path) -> Result<(), String> {
     fs::set_permissions(socket_path, fs::Permissions::from_mode(0o660))
         .map_err(|e| e.to_string())?;
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                if let Err(e) = handle_unix_client(skill, stream) {
+    let worker_count = env::var("EWS_DAEMON_WORKERS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8)
+        .max(1);
+    let queue_capacity = env::var("EWS_DAEMON_QUEUE_CAPACITY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(128)
+        .max(1);
+
+    let (tx, rx) = mpsc::sync_channel::<UnixStream>(queue_capacity);
+    let rx = Arc::new(std::sync::Mutex::new(rx));
+
+    for worker_idx in 0..worker_count {
+        let worker_skill = Arc::clone(&skill);
+        let worker_rx = Arc::clone(&rx);
+        thread::Builder::new()
+            .name(format!("ews-skilld-worker-{}", worker_idx))
+            .spawn(move || loop {
+                let stream = {
+                    let lock = worker_rx.lock();
+                    match lock {
+                        Ok(guard) => match guard.recv() {
+                            Ok(v) => v,
+                            Err(_) => break,
+                        },
+                        Err(_) => break,
+                    }
+                };
+                if let Err(e) = handle_unix_client(&worker_skill, stream) {
                     warn!("unix client error: {}", e);
                 }
-            }
+            })
+            .map_err(|e| e.to_string())?;
+    }
+
+    info!(
+        workers = worker_count,
+        queue_capacity, "unix socket worker pool ready"
+    );
+
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => match tx.try_send(stream) {
+                Ok(()) => {}
+                Err(TrySendError::Full(stream)) => {
+                    warn!("unix socket request queue full; rejecting connection");
+                    if let Err(e) = write_server_busy(stream) {
+                        warn!("failed to send busy response: {}", e);
+                    }
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    return Err("worker queue disconnected".to_string());
+                }
+            },
             Err(e) => warn!("failed to accept unix socket connection: {}", e),
         }
     }
@@ -184,6 +241,17 @@ fn handle_unix_client(skill: &EwsSkill, stream: UnixStream) -> Result<(), String
     }
 
     Ok(())
+}
+
+fn write_server_busy(stream: UnixStream) -> io::Result<()> {
+    let mut writer = BufWriter::new(stream);
+    let response = rpc_error_response_with_data(
+        Value::Null,
+        RPC_SERVER_BUSY_CODE,
+        "server busy".to_string(),
+        Some(json!({"retry_after_ms": 250})),
+    );
+    write_response(&mut writer, response)
 }
 
 fn parse_and_handle(skill: &EwsSkill, raw: &str) -> RpcResponse {
@@ -335,11 +403,24 @@ fn rpc_result_response(id: Value, result: Value) -> RpcResponse {
 }
 
 fn rpc_error_response(id: Value, code: i32, message: String) -> RpcResponse {
+    rpc_error_response_with_data(id, code, message, None)
+}
+
+fn rpc_error_response_with_data(
+    id: Value,
+    code: i32,
+    message: String,
+    data: Option<Value>,
+) -> RpcResponse {
     RpcResponse {
         jsonrpc: "2.0",
         id,
         result: None,
-        error: Some(RpcError { code, message }),
+        error: Some(RpcError {
+            code,
+            message,
+            data,
+        }),
     }
 }
 
