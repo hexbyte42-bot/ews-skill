@@ -284,10 +284,6 @@ impl GraphClient {
         self.request_with_header(method, url, None)
     }
 
-    fn request_raw(&self, method: &str, url: &str) -> Result<reqwest::blocking::Response, String> {
-        self.request_with_header_raw(method, url, None)
-    }
-
     fn request_with_header(
         &self,
         method: &str,
@@ -417,10 +413,6 @@ impl GraphClient {
             return Ok(found);
         }
 
-        if self.folder_exists_by_id(trimmed)? {
-            return Ok(trimmed.to_string());
-        }
-
         Err(format!("Folder not found: {}", trimmed))
     }
 
@@ -478,28 +470,6 @@ impl GraphClient {
         }
 
         Ok(None)
-    }
-
-    fn folder_exists_by_id(&self, folder_id: &str) -> Result<bool, String> {
-        let url = format!(
-            "https://graph.microsoft.com/v1.0/me/mailFolders/{}",
-            folder_id
-        );
-        let response = self.request_raw("GET", &url)?;
-        let status = response.status();
-        if status == reqwest::StatusCode::NOT_FOUND {
-            return Ok(false);
-        }
-        if status.is_success() {
-            return Ok(true);
-        }
-
-        let detail = response.text().unwrap_or_default();
-        Err(format!(
-            "graph request failed ({}): {}",
-            status.as_u16(),
-            detail
-        ))
     }
 }
 
