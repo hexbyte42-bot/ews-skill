@@ -156,11 +156,13 @@ impl EwsSkill {
         let mut selected_folders: Vec<GraphSyncFolder> = Vec::new();
         let mut seen = HashSet::new();
         let mut errors: Vec<String> = Vec::new();
+        let mut failed_specs: HashSet<String> = HashSet::new();
 
         for spec in &self.graph_sync_folders {
             let folder_meta = match client.resolve_folder_for_sync(spec) {
                 Ok(v) => v,
                 Err(e) => {
+                    failed_specs.insert(spec.clone());
                     errors.push(format!("{}: {}", spec, e));
                     continue;
                 }
@@ -194,6 +196,7 @@ impl EwsSkill {
             let emails = match client.list_emails(&folder.folder_id, self.graph_sync_max_per_folder, false) {
                 Ok(v) => v,
                 Err(e) => {
+                    failed_specs.insert(folder.spec.clone());
                     errors.push(format!("{}: {}", folder.spec, e));
                     continue;
                 }
@@ -227,7 +230,7 @@ impl EwsSkill {
         if !errors.is_empty() {
             payload["message"] = Value::String("Sync completed with errors".to_string());
             payload["errors"] = serde_json::json!(errors);
-            payload["folders_failed"] = serde_json::json!(errors.len());
+            payload["folders_failed"] = serde_json::json!(failed_specs.len());
         }
 
         Ok(payload)
