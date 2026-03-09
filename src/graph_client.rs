@@ -136,48 +136,26 @@ impl GraphClient {
             return Err("folder name cannot be empty".to_string());
         }
 
+        let resolved_folder_id = self.resolve_folder_id(folder_input)?;
+
         let top = limit.clamp(1, 200);
-        let fetch = |folder_ref: &str| -> Result<Vec<CachedEmail>, (bool, String)> {
-            let mut url = format!(
-                "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages?$top={}&$orderby=receivedDateTime%20desc",
-                folder_ref, top
-            );
-            if unread_only {
-                url.push_str("&$filter=isRead%20eq%20false");
-            }
-
-            let response = self.request_raw("GET", &url).map_err(|e| (false, e))?;
-            let status = response.status();
-            if !status.is_success() {
-                let detail = response.text().unwrap_or_default();
-                return Err((
-                    status == reqwest::StatusCode::NOT_FOUND,
-                    format!("graph request failed ({}): {}", status.as_u16(), detail),
-                ));
-            }
-
-            let response: GraphList<GraphMessage> =
-                response.json().map_err(|e| (false, e.to_string()))?;
-            Ok(response
-                .value
-                .into_iter()
-                .map(|m| self.message_to_cached_email(m, folder_ref))
-                .collect())
-        };
-
-        match fetch(folder_input) {
-            Ok(emails) => Ok(emails),
-            Err((not_found, err)) => {
-                if !not_found || is_probable_graph_folder_id(folder_input) {
-                    return Err(err);
-                }
-                let resolved = self.resolve_folder_id(folder_input)?;
-                if resolved.eq_ignore_ascii_case(folder_input) {
-                    return Err(err);
-                }
-                fetch(&resolved).map_err(|(_, e)| e)
-            }
+        let mut url = format!(
+            "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages?$top={}&$orderby=receivedDateTime%20desc",
+            resolved_folder_id, top
+        );
+        if unread_only {
+            url.push_str("&$filter=isRead%20eq%20false");
         }
+
+        let response: GraphList<GraphMessage> = self
+            .request("GET", &url)?
+            .json()
+            .map_err(|e| e.to_string())?;
+        Ok(response
+            .value
+            .into_iter()
+            .map(|m| self.message_to_cached_email(m, &resolved_folder_id))
+            .collect())
     }
 
     pub fn read_email(&self, id: &str) -> Result<CachedEmail, String> {
@@ -439,7 +417,11 @@ impl GraphClient {
             return Ok(found);
         }
 
-        Ok(trimmed.to_string())
+        if self.folder_exists_by_id(trimmed)? {
+            return Ok(trimmed.to_string());
+        }
+
+        Err(format!("Folder not found: {}", trimmed))
     }
 
     fn find_folder_id_by_display_name(&self, target: &str) -> Result<Option<String>, String> {
@@ -496,6 +478,28 @@ impl GraphClient {
         }
 
         Ok(None)
+    }
+
+    fn folder_exists_by_id(&self, folder_id: &str) -> Result<bool, String> {
+        let url = format!(
+            "https://graph.microsoft.com/v1.0/me/mailFolders/{}",
+            folder_id
+        );
+        let response = self.request_raw("GET", &url)?;
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        if status.is_success() {
+            return Ok(true);
+        }
+
+        let detail = response.text().unwrap_or_default();
+        Err(format!(
+            "graph request failed ({}): {}",
+            status.as_u16(),
+            detail
+        ))
     }
 }
 
