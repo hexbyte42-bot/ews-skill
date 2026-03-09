@@ -136,48 +136,26 @@ impl GraphClient {
             return Err("folder name cannot be empty".to_string());
         }
 
+        let resolved_folder_id = self.resolve_folder_id(folder_input)?;
+
         let top = limit.clamp(1, 200);
-        let fetch = |folder_ref: &str| -> Result<Vec<CachedEmail>, (bool, String)> {
-            let mut url = format!(
-                "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages?$top={}&$orderby=receivedDateTime%20desc",
-                folder_ref, top
-            );
-            if unread_only {
-                url.push_str("&$filter=isRead%20eq%20false");
-            }
-
-            let response = self.request_raw("GET", &url).map_err(|e| (false, e))?;
-            let status = response.status();
-            if !status.is_success() {
-                let detail = response.text().unwrap_or_default();
-                return Err((
-                    status == reqwest::StatusCode::NOT_FOUND,
-                    format!("graph request failed ({}): {}", status.as_u16(), detail),
-                ));
-            }
-
-            let response: GraphList<GraphMessage> =
-                response.json().map_err(|e| (false, e.to_string()))?;
-            Ok(response
-                .value
-                .into_iter()
-                .map(|m| self.message_to_cached_email(m, folder_ref))
-                .collect())
-        };
-
-        match fetch(folder_input) {
-            Ok(emails) => Ok(emails),
-            Err((not_found, err)) => {
-                if !not_found || is_probable_graph_folder_id(folder_input) {
-                    return Err(err);
-                }
-                let resolved = self.resolve_folder_id(folder_input)?;
-                if resolved.eq_ignore_ascii_case(folder_input) {
-                    return Err(err);
-                }
-                fetch(&resolved).map_err(|(_, e)| e)
-            }
+        let mut url = format!(
+            "https://graph.microsoft.com/v1.0/me/mailFolders/{}/messages?$top={}&$orderby=receivedDateTime%20desc",
+            resolved_folder_id, top
+        );
+        if unread_only {
+            url.push_str("&$filter=isRead%20eq%20false");
         }
+
+        let response: GraphList<GraphMessage> = self
+            .request("GET", &url)?
+            .json()
+            .map_err(|e| e.to_string())?;
+        Ok(response
+            .value
+            .into_iter()
+            .map(|m| self.message_to_cached_email(m, &resolved_folder_id))
+            .collect())
     }
 
     pub fn read_email(&self, id: &str) -> Result<CachedEmail, String> {
@@ -304,10 +282,6 @@ impl GraphClient {
 
     fn request(&self, method: &str, url: &str) -> Result<reqwest::blocking::Response, String> {
         self.request_with_header(method, url, None)
-    }
-
-    fn request_raw(&self, method: &str, url: &str) -> Result<reqwest::blocking::Response, String> {
-        self.request_with_header_raw(method, url, None)
     }
 
     fn request_with_header(
@@ -439,7 +413,7 @@ impl GraphClient {
             return Ok(found);
         }
 
-        Ok(trimmed.to_string())
+        Err(format!("Folder not found: {}", trimmed))
     }
 
     fn find_folder_id_by_display_name(&self, target: &str) -> Result<Option<String>, String> {
@@ -600,6 +574,13 @@ fn is_probable_graph_folder_id(value: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn test_client() -> GraphClient {
+        GraphClient::new(GraphAuthConfig {
+            tenant_id: "test-tenant".to_string(),
+            client_id: "test-client".to_string(),
+        })
+    }
+
     #[test]
     fn folder_name_matching_handles_unicode_and_spaces() {
         let target = " Graph测试 ";
@@ -620,5 +601,23 @@ mod tests {
             1,
             GRAPH_FOLDER_SEARCH_MAX_FOLDERS + 1
         ));
+    }
+
+    #[test]
+    fn resolve_folder_id_keeps_graph_id_passthrough() {
+        let client = test_client();
+        let aamk_id = "AAMkAGQ4YjA1YWMyLTU2MTEtNDhjNy05Mjg1LTU1NTIwNjJiNTdjNAAuAAAAAADNjQgHeq7xSrk8mykTPBiuAQA180euer3lQ4Y_TtMcGzl1AAAAojoWAAA=";
+        let aqmk_id = "AQMkAGQ4YjA1YWMyLTU2MTEALTQ4YzctOTI4NS01NQEyMDYyYjU3YzQALgAAA82NCAd6rvFKuTybKRM8GK4BADXzR656veVDhj5O0xwbOXUAAAIBDAAAAA==";
+
+        assert_eq!(client.resolve_folder_id(aamk_id).unwrap(), aamk_id);
+        assert_eq!(client.resolve_folder_id(aqmk_id).unwrap(), aqmk_id);
+    }
+
+    #[test]
+    fn probable_graph_folder_id_heuristic_rejects_non_ids() {
+        assert!(is_probable_graph_folder_id("AAMkAGQ4YjA1YWMyLTU2MTEtNDhjNy05Mjg1LTU1NTIwNjJiNTdjNAAuAAAAAADNjQgHeq7xSrk8mykTPBiuAQA180euer3lQ4Y_TtMcGzl1AAAAojoWAAA="));
+        assert!(is_probable_graph_folder_id("AQMkAGQ4YjA1YWMyLTU2MTEALTQ4YzctOTI4NS01NQEyMDYyYjU3YzQALgAAA82NCAd6rvFKuTybKRM8GK4BADXzR656veVDhj5O0xwbOXUAAAIBDAAAAA=="));
+        assert!(!is_probable_graph_folder_id("Graph测试"));
+        assert!(!is_probable_graph_folder_id("AAMkSHORT"));
     }
 }
