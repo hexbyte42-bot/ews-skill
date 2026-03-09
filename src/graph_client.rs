@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashSet;
 
 #[derive(Clone)]
 pub struct GraphClient {
@@ -45,6 +46,8 @@ struct GraphFolderItem {
     display_name: String,
     unread_item_count: i32,
     total_item_count: i32,
+    #[serde(default)]
+    child_folder_count: i32,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -420,19 +423,57 @@ impl GraphClient {
             return Err("folder name cannot be empty".to_string());
         }
 
+        if is_probable_graph_folder_id(trimmed) {
+            return Ok(trimmed.to_string());
+        }
+
         let normalized = trimmed.to_ascii_lowercase();
         if is_well_known_folder_name(&normalized) {
             return Ok(normalized);
         }
 
-        let folders = self.list_folders()?;
-        if let Some(found) = folders.into_iter().find(|f| {
-            f.id.eq_ignore_ascii_case(trimmed) || f.display_name.eq_ignore_ascii_case(trimmed)
-        }) {
-            return Ok(found.id);
+        if let Some(found) = self.find_folder_id_by_display_name(trimmed)? {
+            return Ok(found);
         }
 
         Ok(trimmed.to_string())
+    }
+
+    fn find_folder_id_by_display_name(&self, target: &str) -> Result<Option<String>, String> {
+        let target_norm = normalize_folder_name(target);
+        let mut pending =
+            vec!["https://graph.microsoft.com/v1.0/me/mailFolders?$top=100".to_string()];
+        let mut visited_ids = HashSet::new();
+
+        while let Some(mut url) = pending.pop() {
+            loop {
+                let page: GraphList<GraphFolderItem> = self
+                    .request("GET", &url)?
+                    .json()
+                    .map_err(|e| e.to_string())?;
+
+                for folder in page.value {
+                    if folder_name_matches(&folder.display_name, target, &target_norm) {
+                        return Ok(Some(folder.id));
+                    }
+
+                    if folder.child_folder_count > 0 && visited_ids.insert(folder.id.clone()) {
+                        pending.push(format!(
+                            "https://graph.microsoft.com/v1.0/me/mailFolders/{}/childFolders?$top=100",
+                            folder.id
+                        ));
+                    }
+                }
+
+                if let Some(next) = page.next_link {
+                    url = next;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -491,6 +532,14 @@ fn matches_filter(email: &CachedEmail, options: &GraphSearchOptions) -> bool {
 
 fn contains_ci(hay: &str, needle: &str) -> bool {
     hay.to_lowercase().contains(&needle.to_lowercase())
+}
+
+fn normalize_folder_name(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
+fn folder_name_matches(display_name: &str, target_raw: &str, target_norm: &str) -> bool {
+    display_name.trim() == target_raw.trim() || normalize_folder_name(display_name) == target_norm
 }
 
 fn is_well_known_folder_name(value: &str) -> bool {

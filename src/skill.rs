@@ -225,7 +225,7 @@ impl EmailSkill {
             .runtime
             .block_on(self.service.move_email(&email_id, &destination_folder))
         {
-            Ok(_) => ToolResult::ok(json!({ "message": "Email moved" })),
+            Ok(new_id) => ToolResult::ok(json!({ "new_id": new_id })),
             Err(e) => ToolResult::err(e),
         }
     }
