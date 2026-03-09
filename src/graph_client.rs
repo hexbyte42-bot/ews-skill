@@ -125,6 +125,24 @@ impl GraphClient {
         Ok(out)
     }
 
+    pub fn get_folder(&self, folder_ref: &str) -> Result<GraphFolder, String> {
+        let url = format!(
+            "https://graph.microsoft.com/v1.0/me/mailFolders/{}?$select=id,displayName,unreadItemCount,totalItemCount",
+            folder_ref
+        );
+        let folder: GraphFolderItem = self
+            .request("GET", &url)?
+            .json()
+            .map_err(|e| e.to_string())?;
+
+        Ok(GraphFolder {
+            id: folder.id,
+            display_name: folder.display_name,
+            unread_count: folder.unread_item_count,
+            total_count: folder.total_item_count,
+        })
+    }
+
     pub fn list_emails(
         &self,
         folder_name: &str,

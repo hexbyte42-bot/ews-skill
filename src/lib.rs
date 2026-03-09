@@ -61,7 +61,7 @@ impl EwsSkill {
             let graph_sync_max_per_folder = std::env::var("GRAPH_SYNC_MAX_PER_FOLDER")
                 .ok()
                 .and_then(|v| v.parse::<i32>().ok())
-                .map(|v| v.clamp(1, 500))
+                .map(|v| v.clamp(1, 200))
                 .unwrap_or(200);
             return Ok(Self {
                 email_skill: None,
@@ -147,44 +147,42 @@ impl EwsSkill {
             .as_ref()
             .ok_or_else(|| "repository not initialized".to_string())?;
 
-        let server_folders = client.list_folders()?;
         let mut selected_folder_ids = Vec::new();
         let mut selected_names = Vec::new();
         let mut seen = HashSet::new();
 
         for spec in &self.graph_sync_folders {
             let resolved = client.resolve_folder_id_input(spec)?;
-            if !seen.insert(resolved.clone()) {
+            let folder_meta = client.get_folder(&resolved)?;
+            if !seen.insert(folder_meta.id.clone()) {
                 continue;
             }
 
-            let display_name = server_folders
-                .iter()
-                .find(|f| f.id == resolved)
-                .map(|f| f.display_name.clone())
-                .unwrap_or_else(|| spec.clone());
-
             repo.save_folder(&CachedFolder {
-                id: resolved.clone(),
+                id: folder_meta.id.clone(),
                 change_key: None,
                 parent_id: None,
-                display_name,
-                unread_count: 0,
-                total_count: 0,
+                display_name: folder_meta.display_name,
+                unread_count: folder_meta.unread_count,
+                total_count: folder_meta.total_count,
                 synced_at: Utc::now(),
             });
 
             selected_names.push(spec.clone());
-            selected_folder_ids.push(resolved);
+            selected_folder_ids.push(folder_meta.id);
         }
 
         let mut synced_emails = 0usize;
         for folder_id in &selected_folder_ids {
             let emails = client.list_emails(folder_id, self.graph_sync_max_per_folder, false)?;
+            let mut synced_ids = HashSet::new();
             for email in emails {
+                synced_ids.insert(email.id.clone());
                 repo.save_email(&email);
                 synced_emails += 1;
             }
+
+            repo.remove_folder_rows_not_in(folder_id, &synced_ids);
 
             repo.save_sync_state(&SyncState {
                 folder_id: folder_id.clone(),
