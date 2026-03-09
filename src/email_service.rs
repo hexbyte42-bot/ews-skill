@@ -192,7 +192,7 @@ impl EmailService {
             })
     }
 
-    pub async fn move_email(&self, email_id: &str, destination_folder: &str) -> Result<(), String> {
+    pub async fn move_email(&self, email_id: &str, destination_folder: &str) -> Result<String, String> {
         let folder = self
             .repository
             .get_folder_by_name(destination_folder)
@@ -213,7 +213,7 @@ impl EmailService {
             .move_item(&resolved_email_id, &folder.id)
             .await
         {
-            Ok(_) => Ok(()),
+            Ok(new_id) => Ok(new_id),
             Err(e) => {
                 self.repository.move_email(&resolved_email_id, &old_folder);
                 Err(e.to_string())
