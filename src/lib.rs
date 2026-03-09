@@ -7,7 +7,7 @@ pub mod graph_client;
 pub mod skill;
 pub mod sync_engine;
 
-use cache::{Database, Repository};
+use cache::{CachedFolder, Database, Repository, SyncState};
 use config::Config;
 use email_service::EmailService;
 use ews_client::{ntlm_supported, EwsClient, EwsClientOptions};
@@ -15,6 +15,8 @@ use graph_auth::{token_state, GraphAuthConfig};
 use graph_client::{GraphClient, GraphSearchOptions};
 use serde_json::Value;
 use skill::EmailSkill;
+use chrono::Utc;
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use sync_engine::SyncEngine;
 use tokio::runtime::Runtime;
@@ -28,6 +30,8 @@ pub struct EwsSkill {
     graph_client: Option<GraphClient>,
     protocol: String,
     graph_auth: Option<GraphAuthConfig>,
+    graph_sync_folders: Vec<String>,
+    graph_sync_max_per_folder: i32,
 }
 
 impl EwsSkill {
@@ -54,6 +58,11 @@ impl EwsSkill {
                 client_id: config.graph.client_id.clone(),
             };
             let graph_client = GraphClient::new(graph_auth.clone());
+            let graph_sync_max_per_folder = std::env::var("GRAPH_SYNC_MAX_PER_FOLDER")
+                .ok()
+                .and_then(|v| v.parse::<i32>().ok())
+                .map(|v| v.clamp(1, 500))
+                .unwrap_or(200);
             return Ok(Self {
                 email_skill: None,
                 sync_engine: None,
@@ -61,6 +70,8 @@ impl EwsSkill {
                 graph_client: Some(graph_client),
                 protocol: "graph".to_string(),
                 graph_auth: Some(graph_auth),
+                graph_sync_folders: config.sync.folders.clone(),
+                graph_sync_max_per_folder,
             });
         }
 
@@ -121,7 +132,75 @@ impl EwsSkill {
             graph_client: None,
             protocol: "ews".to_string(),
             graph_auth: None,
+            graph_sync_folders: Vec::new(),
+            graph_sync_max_per_folder: 0,
         })
+    }
+
+    fn sync_graph_now(&self) -> Result<Value, String> {
+        let client = self
+            .graph_client
+            .as_ref()
+            .ok_or_else(|| "graph client not initialized".to_string())?;
+        let repo = self
+            .repository
+            .as_ref()
+            .ok_or_else(|| "repository not initialized".to_string())?;
+
+        let server_folders = client.list_folders()?;
+        let mut selected_folder_ids = Vec::new();
+        let mut selected_names = Vec::new();
+        let mut seen = HashSet::new();
+
+        for spec in &self.graph_sync_folders {
+            let resolved = client.resolve_folder_id_input(spec)?;
+            if !seen.insert(resolved.clone()) {
+                continue;
+            }
+
+            let display_name = server_folders
+                .iter()
+                .find(|f| f.id == resolved)
+                .map(|f| f.display_name.clone())
+                .unwrap_or_else(|| spec.clone());
+
+            repo.save_folder(&CachedFolder {
+                id: resolved.clone(),
+                change_key: None,
+                parent_id: None,
+                display_name,
+                unread_count: 0,
+                total_count: 0,
+                synced_at: Utc::now(),
+            });
+
+            selected_names.push(spec.clone());
+            selected_folder_ids.push(resolved);
+        }
+
+        let mut synced_emails = 0usize;
+        for folder_id in &selected_folder_ids {
+            let emails = client.list_emails(folder_id, self.graph_sync_max_per_folder, false)?;
+            for email in emails {
+                repo.save_email(&email);
+                synced_emails += 1;
+            }
+
+            repo.save_sync_state(&SyncState {
+                folder_id: folder_id.clone(),
+                sync_state: "graph_latest".to_string(),
+                last_sync_at: Utc::now(),
+            });
+        }
+
+        Ok(serde_json::json!({
+            "message": "Sync completed",
+            "backend": "graph",
+            "folders_synced": selected_folder_ids.len(),
+            "emails_synced": synced_emails,
+            "sync_folders": selected_names,
+            "max_per_folder": self.graph_sync_max_per_folder,
+        }))
     }
 
     pub fn from_env() -> Result<Self, String> {
@@ -424,9 +503,10 @@ impl EwsSkill {
 
     pub fn sync(&self) -> skill::ToolResult {
         if self.protocol == "graph" {
-            return skill::ToolResult::ok(serde_json::json!({
-                "message": "Graph mode uses live API reads; explicit cache sync is not required"
-            }));
+            return match self.sync_graph_now() {
+                Ok(v) => skill::ToolResult::ok(v),
+                Err(e) => skill::ToolResult::err(e),
+            };
         }
         match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
             Some(skill) => skill.sync_now(),
@@ -457,15 +537,27 @@ impl EwsSkill {
                 Ok(auth) => {
                     let (ok, err) = token_state(&auth);
                     let status = if ok { "ready" } else { "auth_required" };
+                    let (synced_folders, total_folders, cached_emails) = self
+                        .repository
+                        .as_ref()
+                        .map(|r| {
+                            (
+                                r.get_synced_folders().len(),
+                                r.count_folders() as usize,
+                                r.count_emails() as usize,
+                            )
+                        })
+                        .unwrap_or((0, 0, 0));
                     skill::ToolResult::ok(serde_json::json!({
                         "backend": "graph",
                         "status": status,
                         "auth_ok": ok,
                         "inbox_found": ok,
                         "initial_sync_in_progress": false,
-                        "progress": "0/0 folders",
-                        "synced_folders": 0,
-                        "total_folders": 0,
+                        "progress": format!("{}/{} folders", synced_folders, total_folders),
+                        "synced_folders": synced_folders,
+                        "total_folders": total_folders,
+                        "cached_emails": cached_emails,
                         "last_sync_at": Value::Null,
                         "error": err,
                     }))

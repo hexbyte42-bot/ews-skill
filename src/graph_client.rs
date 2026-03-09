@@ -280,6 +280,10 @@ impl GraphClient {
         Ok(())
     }
 
+    pub fn resolve_folder_id_input(&self, folder: &str) -> Result<String, String> {
+        self.resolve_folder_id(folder)
+    }
+
     fn request(&self, method: &str, url: &str) -> Result<reqwest::blocking::Response, String> {
         self.request_with_header(method, url, None)
     }
