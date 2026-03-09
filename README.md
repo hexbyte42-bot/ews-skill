@@ -131,9 +131,11 @@ export MAIL_PROTOCOL='ews'
 # export MAIL_PROTOCOL='graph'
 # export GRAPH_CLIENT_ID='xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 # export GRAPH_TENANT_ID='xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+# export EWS_SYNC_FOLDERS='inbox,sentitems'   # also used as Graph cache-sync folder subset
+# export GRAPH_SYNC_MAX_PER_FOLDER=200         # latest N messages per synced Graph folder (max 200)
 ```
 
-Graph delegated login/logout (required before Graph protocol health/list/read/search):
+Graph delegated login/logout (required before Graph protocol health/list/read/search/sync):
 
 ```bash
 GRAPH_CLIENT_ID='...' GRAPH_TENANT_ID='...' ews_skillctl login
@@ -325,7 +327,7 @@ Protocol note:
 
 - `MAIL_PROTOCOL=ews`: full current functionality.
 - `MAIL_PROTOCOL=graph`: delegated auth + tool parity is available for `health/list_server_folders/list_synced_folders/list/read/search/send/move/delete/mark_read`.
-- In Graph mode, `email_sync_now` is a no-op success because reads are live API queries.
+- In Graph mode, `email_sync_now` performs local cache sync for folders in `EWS_SYNC_FOLDERS` (latest `GRAPH_SYNC_MAX_PER_FOLDER` per folder).
 
 `email_delete` behavior:
 

@@ -125,6 +125,46 @@ impl GraphClient {
         Ok(out)
     }
 
+    pub fn get_folder(&self, folder_ref: &str) -> Result<GraphFolder, String> {
+        let url = format!(
+            "https://graph.microsoft.com/v1.0/me/mailFolders/{}?$select=id,displayName,unreadItemCount,totalItemCount",
+            folder_ref
+        );
+        let folder: GraphFolderItem = self
+            .request("GET", &url)?
+            .json()
+            .map_err(|e| e.to_string())?;
+
+        Ok(GraphFolder {
+            id: folder.id,
+            display_name: folder.display_name,
+            unread_count: folder.unread_item_count,
+            total_count: folder.total_item_count,
+        })
+    }
+
+    pub fn resolve_folder_for_sync(&self, folder_spec: &str) -> Result<GraphFolder, String> {
+        let trimmed = folder_spec.trim();
+        if trimmed.is_empty() {
+            return Err("folder name cannot be empty".to_string());
+        }
+
+        if is_probable_graph_folder_id(trimmed) {
+            return self.get_folder(trimmed);
+        }
+
+        let normalized = trimmed.to_ascii_lowercase();
+        if is_well_known_folder_name(&normalized) {
+            return self.get_folder(&normalized);
+        }
+
+        if let Some(folder_id) = self.find_folder_id_by_display_name(trimmed)? {
+            return self.get_folder(&folder_id);
+        }
+
+        Err(format!("Folder not found: {}", trimmed))
+    }
+
     pub fn list_emails(
         &self,
         folder_name: &str,
