@@ -574,6 +574,13 @@ fn is_probable_graph_folder_id(value: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn test_client() -> GraphClient {
+        GraphClient::new(GraphAuthConfig {
+            tenant_id: "test-tenant".to_string(),
+            client_id: "test-client".to_string(),
+        })
+    }
+
     #[test]
     fn folder_name_matching_handles_unicode_and_spaces() {
         let target = " Graph测试 ";
@@ -594,5 +601,23 @@ mod tests {
             1,
             GRAPH_FOLDER_SEARCH_MAX_FOLDERS + 1
         ));
+    }
+
+    #[test]
+    fn resolve_folder_id_keeps_graph_id_passthrough() {
+        let client = test_client();
+        let aamk_id = "AAMkAGQ4YjA1YWMyLTU2MTEtNDhjNy05Mjg1LTU1NTIwNjJiNTdjNAAuAAAAAADNjQgHeq7xSrk8mykTPBiuAQA180euer3lQ4Y_TtMcGzl1AAAAojoWAAA=";
+        let aqmk_id = "AQMkAGQ4YjA1YWMyLTU2MTEALTQ4YzctOTI4NS01NQEyMDYyYjU3YzQALgAAA82NCAd6rvFKuTybKRM8GK4BADXzR656veVDhj5O0xwbOXUAAAIBDAAAAA==";
+
+        assert_eq!(client.resolve_folder_id(aamk_id).unwrap(), aamk_id);
+        assert_eq!(client.resolve_folder_id(aqmk_id).unwrap(), aqmk_id);
+    }
+
+    #[test]
+    fn probable_graph_folder_id_heuristic_rejects_non_ids() {
+        assert!(is_probable_graph_folder_id("AAMkAGQ4YjA1YWMyLTU2MTEtNDhjNy05Mjg1LTU1NTIwNjJiNTdjNAAuAAAAAADNjQgHeq7xSrk8mykTPBiuAQA180euer3lQ4Y_TtMcGzl1AAAAojoWAAA="));
+        assert!(is_probable_graph_folder_id("AQMkAGQ4YjA1YWMyLTU2MTEALTQ4YzctOTI4NS01NQEyMDYyYjU3YzQALgAAA82NCAd6rvFKuTybKRM8GK4BADXzR656veVDhj5O0xwbOXUAAAIBDAAAAA=="));
+        assert!(!is_probable_graph_folder_id("Graph测试"));
+        assert!(!is_probable_graph_folder_id("AAMkSHORT"));
     }
 }
