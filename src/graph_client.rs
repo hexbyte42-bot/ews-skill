@@ -143,6 +143,28 @@ impl GraphClient {
         })
     }
 
+    pub fn resolve_folder_for_sync(&self, folder_spec: &str) -> Result<GraphFolder, String> {
+        let trimmed = folder_spec.trim();
+        if trimmed.is_empty() {
+            return Err("folder name cannot be empty".to_string());
+        }
+
+        if is_probable_graph_folder_id(trimmed) {
+            return self.get_folder(trimmed);
+        }
+
+        let normalized = trimmed.to_ascii_lowercase();
+        if is_well_known_folder_name(&normalized) {
+            return self.get_folder(&normalized);
+        }
+
+        if let Some(folder_id) = self.find_folder_id_by_display_name(trimmed)? {
+            return self.get_folder(&folder_id);
+        }
+
+        Err(format!("Folder not found: {}", trimmed))
+    }
+
     pub fn list_emails(
         &self,
         folder_name: &str,
@@ -296,10 +318,6 @@ impl GraphClient {
 
         let _ = self.move_email(id, "deleteditems")?;
         Ok(())
-    }
-
-    pub fn resolve_folder_id_input(&self, folder: &str) -> Result<String, String> {
-        self.resolve_folder_id(folder)
     }
 
     fn request(&self, method: &str, url: &str) -> Result<reqwest::blocking::Response, String> {

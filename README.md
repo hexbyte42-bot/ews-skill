@@ -132,7 +132,7 @@ export MAIL_PROTOCOL='ews'
 # export GRAPH_CLIENT_ID='xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 # export GRAPH_TENANT_ID='xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 # export EWS_SYNC_FOLDERS='inbox,sentitems'   # also used as Graph cache-sync folder subset
-# export GRAPH_SYNC_MAX_PER_FOLDER=200         # latest N messages per synced Graph folder
+# export GRAPH_SYNC_MAX_PER_FOLDER=200         # latest N messages per synced Graph folder (max 200)
 ```
 
 Graph delegated login/logout (required before Graph protocol health/list/read/search/sync):

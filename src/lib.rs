@@ -23,6 +23,12 @@ use tokio::runtime::Runtime;
 use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+#[derive(Clone)]
+struct GraphSyncFolder {
+    spec: String,
+    folder_id: String,
+}
+
 pub struct EwsSkill {
     email_skill: Option<Arc<Mutex<EmailSkill>>>,
     sync_engine: Option<SyncEngine>,
@@ -147,34 +153,51 @@ impl EwsSkill {
             .as_ref()
             .ok_or_else(|| "repository not initialized".to_string())?;
 
-        let mut selected_folder_ids = Vec::new();
-        let mut selected_names = Vec::new();
+        let mut selected_folders: Vec<GraphSyncFolder> = Vec::new();
         let mut seen = HashSet::new();
+        let mut errors: Vec<String> = Vec::new();
 
         for spec in &self.graph_sync_folders {
-            let resolved = client.resolve_folder_id_input(spec)?;
-            let folder_meta = client.get_folder(&resolved)?;
-            if !seen.insert(folder_meta.id.clone()) {
+            let folder_meta = match client.resolve_folder_for_sync(spec) {
+                Ok(v) => v,
+                Err(e) => {
+                    errors.push(format!("{}: {}", spec, e));
+                    continue;
+                }
+            };
+
+            let folder_id = folder_meta.id.clone();
+            let display_name = folder_meta.display_name.clone();
+            if !seen.insert(folder_id.clone()) {
                 continue;
             }
 
             repo.save_folder(&CachedFolder {
-                id: folder_meta.id.clone(),
+                id: folder_id.clone(),
                 change_key: None,
                 parent_id: None,
-                display_name: folder_meta.display_name,
+                display_name,
                 unread_count: folder_meta.unread_count,
                 total_count: folder_meta.total_count,
                 synced_at: Utc::now(),
             });
 
-            selected_names.push(spec.clone());
-            selected_folder_ids.push(folder_meta.id);
+            selected_folders.push(GraphSyncFolder {
+                spec: spec.clone(),
+                folder_id,
+            });
         }
 
         let mut synced_emails = 0usize;
-        for folder_id in &selected_folder_ids {
-            let emails = client.list_emails(folder_id, self.graph_sync_max_per_folder, false)?;
+        let mut synced_folder_count = 0usize;
+        for folder in &selected_folders {
+            let emails = match client.list_emails(&folder.folder_id, self.graph_sync_max_per_folder, false) {
+                Ok(v) => v,
+                Err(e) => {
+                    errors.push(format!("{}: {}", folder.spec, e));
+                    continue;
+                }
+            };
             let mut synced_ids = HashSet::new();
             for email in emails {
                 synced_ids.insert(email.id.clone());
@@ -182,23 +205,32 @@ impl EwsSkill {
                 synced_emails += 1;
             }
 
-            repo.remove_folder_rows_not_in(folder_id, &synced_ids);
+            repo.remove_folder_rows_not_in(&folder.folder_id, &synced_ids);
 
             repo.save_sync_state(&SyncState {
-                folder_id: folder_id.clone(),
+                folder_id: folder.folder_id.clone(),
                 sync_state: "graph_latest".to_string(),
                 last_sync_at: Utc::now(),
             });
+            synced_folder_count += 1;
         }
 
-        Ok(serde_json::json!({
+        let mut payload = serde_json::json!({
             "message": "Sync completed",
             "backend": "graph",
-            "folders_synced": selected_folder_ids.len(),
+            "folders_synced": synced_folder_count,
             "emails_synced": synced_emails,
-            "sync_folders": selected_names,
+            "sync_folders": selected_folders.iter().map(|f| f.spec.clone()).collect::<Vec<_>>(),
             "max_per_folder": self.graph_sync_max_per_folder,
-        }))
+        });
+
+        if !errors.is_empty() {
+            payload["message"] = Value::String("Sync completed with errors".to_string());
+            payload["errors"] = serde_json::json!(errors);
+            payload["folders_failed"] = serde_json::json!(errors.len());
+        }
+
+        Ok(payload)
     }
 
     pub fn from_env() -> Result<Self, String> {
