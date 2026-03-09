@@ -6,6 +6,9 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
 
+const GRAPH_FOLDER_SEARCH_MAX_PAGES: usize = 500;
+const GRAPH_FOLDER_SEARCH_MAX_FOLDERS: usize = 20000;
+
 #[derive(Clone)]
 pub struct GraphClient {
     auth: GraphAuthConfig,
@@ -444,23 +447,42 @@ impl GraphClient {
         let mut pending =
             vec!["https://graph.microsoft.com/v1.0/me/mailFolders?$top=100".to_string()];
         let mut visited_ids = HashSet::new();
+        let mut pages_seen = 0usize;
+        let mut folders_seen = 0usize;
 
         while let Some(mut url) = pending.pop() {
             loop {
+                pages_seen += 1;
+                if folder_search_budget_exceeded(pages_seen, folders_seen) {
+                    return Err(format!(
+                        "folder lookup exceeded traversal budget (pages={}, folders={})",
+                        pages_seen, folders_seen
+                    ));
+                }
+
                 let page: GraphList<GraphFolderItem> = self
                     .request("GET", &url)?
                     .json()
                     .map_err(|e| e.to_string())?;
 
                 for folder in page.value {
-                    if folder_name_matches(&folder.display_name, target, &target_norm) {
-                        return Ok(Some(folder.id));
+                    folders_seen += 1;
+                    if folder_search_budget_exceeded(pages_seen, folders_seen) {
+                        return Err(format!(
+                            "folder lookup exceeded traversal budget (pages={}, folders={})",
+                            pages_seen, folders_seen
+                        ));
                     }
 
-                    if folder.child_folder_count > 0 && visited_ids.insert(folder.id.clone()) {
+                    let folder_id = folder.id;
+                    if folder_name_matches(&folder.display_name, target, &target_norm) {
+                        return Ok(Some(folder_id));
+                    }
+
+                    if folder.child_folder_count > 0 && visited_ids.insert(folder_id.clone()) {
                         pending.push(format!(
                             "https://graph.microsoft.com/v1.0/me/mailFolders/{}/childFolders?$top=100",
-                            folder.id
+                            folder_id
                         ));
                     }
                 }
@@ -542,6 +564,10 @@ fn folder_name_matches(display_name: &str, target_raw: &str, target_norm: &str) 
     display_name.trim() == target_raw.trim() || normalize_folder_name(display_name) == target_norm
 }
 
+fn folder_search_budget_exceeded(pages_seen: usize, folders_seen: usize) -> bool {
+    pages_seen > GRAPH_FOLDER_SEARCH_MAX_PAGES || folders_seen > GRAPH_FOLDER_SEARCH_MAX_FOLDERS
+}
+
 fn is_well_known_folder_name(value: &str) -> bool {
     matches!(
         value,
@@ -568,4 +594,31 @@ fn is_well_known_folder_name(value: &str) -> bool {
 
 fn is_probable_graph_folder_id(value: &str) -> bool {
     (value.starts_with("AAMk") || value.starts_with("AQMk")) && value.len() >= 40
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_name_matching_handles_unicode_and_spaces() {
+        let target = " Graph测试 ";
+        let norm = normalize_folder_name(target);
+        assert!(folder_name_matches("Graph测试", target, &norm));
+        assert!(folder_name_matches("  graph测试  ", target, &norm));
+        assert!(!folder_name_matches("Graph test", target, &norm));
+    }
+
+    #[test]
+    fn folder_search_budget_limits_are_enforced() {
+        assert!(!folder_search_budget_exceeded(10, 100));
+        assert!(folder_search_budget_exceeded(
+            GRAPH_FOLDER_SEARCH_MAX_PAGES + 1,
+            1
+        ));
+        assert!(folder_search_budget_exceeded(
+            1,
+            GRAPH_FOLDER_SEARCH_MAX_FOLDERS + 1
+        ));
+    }
 }
