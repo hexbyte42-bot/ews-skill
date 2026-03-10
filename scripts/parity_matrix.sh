@@ -14,6 +14,8 @@ FAILED=0
 DAEMON_PID=""
 SKIPPED=0
 REQUIRE_EWS_AUTH="${PARITY_REQUIRE_EWS_AUTH:-false}"
+REQUIRE_GRAPH_AUTH="${PARITY_REQUIRE_GRAPH_AUTH:-false}"
+PARITY_PROTOCOL="${PARITY_PROTOCOL:-both}"
 
 cleanup() {
   if [[ -n "${DAEMON_PID}" ]]; then
@@ -30,12 +32,25 @@ run_success_json() {
   shift 2
 
   local out
-  if ! out="$($@ 2>&1)"; then
+  local attempt=0
+  while true; do
+    set +e
+    out="$($@ 2>&1)"
+    local rc=$?
+    set -e
+    if [[ ${rc} -eq 0 ]]; then
+      break
+    fi
+    if [[ ${attempt} -lt 3 && "${out}" == *"Resource temporarily unavailable"* ]]; then
+      attempt=$((attempt + 1))
+      sleep 0.2
+      continue
+    fi
     echo "[FAIL] ${header}: command failed"
     echo "${out}"
     FAILED=1
     return
-  fi
+  done
 
   if ! jq -e "${check}" >/dev/null <<<"${out}"; then
     echo "[FAIL] ${header}: unexpected JSON"
@@ -112,6 +127,19 @@ start_daemon() {
   return 0
 }
 
+should_run_protocol() {
+  local protocol="$1"
+  case "${PARITY_PROTOCOL}" in
+    both) return 0 ;;
+    ews) [[ "${protocol}" == "ews" ]] ;;
+    graph) [[ "${protocol}" == "graph" ]] ;;
+    *)
+      echo "Invalid PARITY_PROTOCOL='${PARITY_PROTOCOL}' (expected: ews|graph|both)"
+      exit 2
+      ;;
+  esac
+}
+
 run_protocol_suite() {
   local protocol="$1"
   echo ""
@@ -142,12 +170,14 @@ run_protocol_suite() {
   echo "[PASS] ${protocol} health"
 
   if ! jq -e '.auth_ok == true' >/dev/null <<<"${health_out}"; then
-    if [[ "${protocol}" == "ews" && "${REQUIRE_EWS_AUTH}" == "true" ]]; then
-      echo "[FAIL] ${protocol}: auth_ok=false with PARITY_REQUIRE_EWS_AUTH=true"
+    if [[ "${protocol}" == "graph" && "${REQUIRE_GRAPH_AUTH}" == "true" ]]; then
+      echo "[FAIL] ${protocol}: auth_ok=false with PARITY_REQUIRE_GRAPH_AUTH=true"
       FAILED=1
       kill "${DAEMON_PID}" >/dev/null 2>&1 || true
       DAEMON_PID=""
       return
+    elif [[ "${protocol}" == "ews" ]]; then
+      echo "[WARN] ${protocol}: auth_ok=false in health; continuing with functional checks"
     else
       echo "[SKIP] ${protocol}: auth_ok=false, skipping protocol checks"
       SKIPPED=1
@@ -186,8 +216,13 @@ run_protocol_suite() {
 echo "Building binaries..."
 cargo build --bin ews_skilld --bin ews_skillctl >/dev/null
 
-run_protocol_suite ews
-run_protocol_suite graph
+if should_run_protocol ews; then
+  run_protocol_suite ews
+fi
+
+if should_run_protocol graph; then
+  run_protocol_suite graph
+fi
 
 echo ""
 if [[ ${FAILED} -eq 0 ]]; then

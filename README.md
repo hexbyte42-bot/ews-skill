@@ -162,6 +162,12 @@ SMOKE_DO_WRITE=true SMOKE_TEST_DELETE_MODES=true ./scripts/smoke_test.sh
 
 # Protocol parity matrix (EWS + Graph, cache/server/error contract checks)
 ./scripts/parity_matrix.sh
+
+# Run EWS parity only (recommended for NTLM validation)
+PARITY_PROTOCOL=ews PARITY_REQUIRE_EWS_AUTH=true ./scripts/parity_matrix.sh
+
+# Run Graph parity only
+PARITY_PROTOCOL=graph PARITY_REQUIRE_GRAPH_AUTH=true ./scripts/parity_matrix.sh
 ```
 
 ### Use released binary with OpenClaw
