@@ -340,7 +340,10 @@ Protocol note:
 
 - `MAIL_PROTOCOL=ews`: full current functionality.
 - `MAIL_PROTOCOL=graph`: delegated auth + tool parity is available for `health/list_server_folders/list_synced_folders/list/read/search/send/move/delete/mark_read`.
-- In Graph mode, `email_sync_now` performs local cache sync for folders in `EWS_SYNC_FOLDERS` (latest `GRAPH_SYNC_MAX_PER_FOLDER` per folder).
+- In Graph mode, background polling also syncs local cache (uses the same poll interval as `EWS_SYNC_INTERVAL_SECONDS`).
+- `EWS_SYNC_INTERVAL_SECONDS=0` disables Graph background polling (only on-demand sync via `email_sync_now` runs).
+- For periodic polling, use a positive interval; very small intervals can increase load significantly.
+- In Graph mode, `email_sync_now` performs immediate local cache sync for folders in `EWS_SYNC_FOLDERS` (latest `GRAPH_SYNC_MAX_PER_FOLDER` per folder).
 - In Graph mode, `email_add_folder` enrolls the folder in local sync scope and runs an immediate folder sync.
 
 `email_delete` behavior:
