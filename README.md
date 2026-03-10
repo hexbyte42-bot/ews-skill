@@ -159,6 +159,9 @@ SMOKE_DO_WRITE=true ./scripts/smoke_test.sh
 # Optional delete behavior check:
 # default delete => Deleted Items, skip_trash=true => SoftDelete
 SMOKE_DO_WRITE=true SMOKE_TEST_DELETE_MODES=true ./scripts/smoke_test.sh
+
+# Protocol parity matrix (EWS + Graph, cache/server/error contract checks)
+./scripts/parity_matrix.sh
 ```
 
 ### Use released binary with OpenClaw
