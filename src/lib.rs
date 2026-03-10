@@ -38,6 +38,7 @@ pub struct EwsSkill {
     graph_auth: Option<GraphAuthConfig>,
     graph_sync_folders: Vec<String>,
     graph_sync_max_per_folder: i32,
+    graph_sync_lock: Option<Mutex<()>>,
 }
 
 impl EwsSkill {
@@ -78,6 +79,7 @@ impl EwsSkill {
                 graph_auth: Some(graph_auth),
                 graph_sync_folders: config.sync.folders.clone(),
                 graph_sync_max_per_folder,
+                graph_sync_lock: Some(Mutex::new(())),
             });
         }
 
@@ -140,10 +142,18 @@ impl EwsSkill {
             graph_auth: None,
             graph_sync_folders: Vec::new(),
             graph_sync_max_per_folder: 0,
+            graph_sync_lock: None,
         })
     }
 
     fn sync_graph_now(&self) -> Result<Value, String> {
+        let _sync_guard = self
+            .graph_sync_lock
+            .as_ref()
+            .ok_or_else(|| "graph sync lock not initialized".to_string())?
+            .try_lock()
+            .map_err(|_| "graph sync already in progress".to_string())?;
+
         let client = self
             .graph_client
             .as_ref()
@@ -561,6 +571,19 @@ impl EwsSkill {
 
     pub fn add_folder(&self, folder_name: String) -> skill::ToolResult {
         if self.protocol == "graph" {
+            let _sync_guard = match self
+                .graph_sync_lock
+                .as_ref()
+                .ok_or_else(|| "graph sync lock not initialized".to_string())
+                .and_then(|l| {
+                    l.try_lock()
+                        .map_err(|_| "graph sync already in progress".to_string())
+                })
+            {
+                Ok(v) => v,
+                Err(e) => return skill::ToolResult::err(e),
+            };
+
             let client = match self.graph_client.as_ref() {
                 Some(v) => v,
                 None => return skill::ToolResult::err("graph client not initialized".to_string()),
