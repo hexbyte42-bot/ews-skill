@@ -142,6 +142,10 @@ GRAPH_CLIENT_ID='...' GRAPH_TENANT_ID='...' ews_skillctl login
 ews_skillctl logout
 ```
 
+If `ews_skilld` is already running in Graph mode with tenant/client configured,
+`ews_skillctl login` can reuse daemon-side Graph auth config even when local
+`GRAPH_CLIENT_ID` / `GRAPH_TENANT_ID` are not exported.
+
 2. Run daemon manually (optional):
 
 ```bash
@@ -159,6 +163,15 @@ SMOKE_DO_WRITE=true ./scripts/smoke_test.sh
 # Optional delete behavior check:
 # default delete => Deleted Items, skip_trash=true => SoftDelete
 SMOKE_DO_WRITE=true SMOKE_TEST_DELETE_MODES=true ./scripts/smoke_test.sh
+
+# Protocol parity matrix (EWS + Graph, cache/server/error contract checks)
+./scripts/parity_matrix.sh
+
+# Run EWS parity only (recommended for NTLM validation)
+PARITY_PROTOCOL=ews PARITY_REQUIRE_EWS_AUTH=true ./scripts/parity_matrix.sh
+
+# Run Graph parity only
+PARITY_PROTOCOL=graph PARITY_REQUIRE_GRAPH_AUTH=true ./scripts/parity_matrix.sh
 ```
 
 ### Use released binary with OpenClaw

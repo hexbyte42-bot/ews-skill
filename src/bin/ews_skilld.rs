@@ -321,6 +321,20 @@ fn handle_request(skill: &EwsSkill, request: RpcRequest) -> RpcResponse {
 
     match request.method.as_str() {
         "tools.list" => rpc_result_response(id, json!(EwsSkill::get_tools())),
+        "graph.auth_config" => match skill.graph_auth_config() {
+            Some(auth) => rpc_result_response(
+                id,
+                json!({
+                    "tenant_id": auth.tenant_id,
+                    "client_id": auth.client_id,
+                }),
+            ),
+            None => rpc_error_response(
+                id,
+                -32001,
+                "graph auth config unavailable (daemon not in graph mode)".to_string(),
+            ),
+        },
         "tools.call" => {
             let params = match request.params {
                 Some(value) => value,

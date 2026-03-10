@@ -343,9 +343,11 @@ fn main() {
         std::process::exit(2);
     };
 
+    let client = Client::new(cli.socket.clone(), cli.timeout_ms);
+
     match command {
         Command::Login => {
-            let auth = graph_auth_from_env().unwrap_or_else(|e| {
+            let auth = graph_auth_from_env_or_daemon(&client).unwrap_or_else(|e| {
                 eprintln!("{}", e);
                 std::process::exit(2);
             });
@@ -388,8 +390,6 @@ fn main() {
         }
         _ => {}
     }
-
-    let client = Client::new(cli.socket.clone(), cli.timeout_ms);
 
     let result = match command {
         Command::Login | Command::Logout => unreachable!(),
@@ -629,6 +629,52 @@ fn graph_auth_from_env() -> Result<GraphAuthConfig, String> {
         .map_err(|_| "missing GRAPH_TENANT_ID in environment".to_string())?;
     let client_id = std::env::var("GRAPH_CLIENT_ID")
         .map_err(|_| "missing GRAPH_CLIENT_ID in environment".to_string())?;
+    Ok(GraphAuthConfig {
+        tenant_id,
+        client_id,
+    })
+}
+
+fn graph_auth_from_env_or_daemon(client: &Client) -> Result<GraphAuthConfig, String> {
+    if let Ok(auth) = graph_auth_from_env() {
+        return Ok(auth);
+    }
+
+    let response = client
+        .call_method("graph.auth_config", json!({}))
+        .map_err(|e| {
+            format!(
+                "missing GRAPH_TENANT_ID/GRAPH_CLIENT_ID in environment and daemon fallback failed (is ews_skilld running in graph mode?): {}",
+                e
+            )
+        })?;
+
+    if let Some(err) = response.get("error") {
+        let msg = err
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown daemon error");
+        return Err(format!(
+            "missing GRAPH_TENANT_ID/GRAPH_CLIENT_ID in environment and daemon fallback failed: {}",
+            msg
+        ));
+    }
+
+    let result = response
+        .get("result")
+        .ok_or_else(|| "daemon graph.auth_config returned no result".to_string())?;
+
+    let tenant_id = result
+        .get("tenant_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "daemon graph.auth_config missing tenant_id".to_string())?
+        .to_string();
+    let client_id = result
+        .get("client_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "daemon graph.auth_config missing client_id".to_string())?
+        .to_string();
+
     Ok(GraphAuthConfig {
         tenant_id,
         client_id,

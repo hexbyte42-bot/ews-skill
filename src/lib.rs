@@ -42,6 +42,10 @@ pub struct EwsSkill {
 }
 
 impl EwsSkill {
+    pub fn graph_auth_config(&self) -> Option<GraphAuthConfig> {
+        self.graph_auth.clone()
+    }
+
     fn normalize_error_message(error: &str) -> String {
         if error.starts_with("[E_") {
             return error.to_string();
