@@ -42,6 +42,59 @@ pub struct EwsSkill {
 }
 
 impl EwsSkill {
+    fn graph_cache_folder_id(&self, folder_spec: &str) -> Option<String> {
+        let repo = self.repository.as_ref()?;
+        let spec = folder_spec.trim();
+        if spec.is_empty() {
+            return None;
+        }
+
+        if let Some(folder) = repo.get_folder(spec) {
+            return Some(folder.id);
+        }
+
+        let spec_norm = spec.to_lowercase();
+        repo.list_folders()
+            .into_iter()
+            .find(|f| {
+                f.id.eq_ignore_ascii_case(spec)
+                    || f.display_name.eq_ignore_ascii_case(spec)
+                    || f.display_name.to_lowercase() == spec_norm
+            })
+            .map(|f| f.id)
+    }
+
+    fn graph_save_folder_meta(&self, folder_spec: &str) {
+        let client = match self.graph_client.as_ref() {
+            Some(c) => c,
+            None => return,
+        };
+        let repo = match self.repository.as_ref() {
+            Some(r) => r,
+            None => return,
+        };
+
+        if let Ok(folder) = client.resolve_folder_for_sync(folder_spec) {
+            repo.save_folder(&CachedFolder {
+                id: folder.id,
+                change_key: None,
+                parent_id: None,
+                display_name: folder.display_name,
+                unread_count: folder.unread_count,
+                total_count: folder.total_count,
+                synced_at: Utc::now(),
+            });
+        }
+    }
+
+    fn graph_save_emails_to_cache(&self, emails: &[cache::CachedEmail]) {
+        if let Some(repo) = self.repository.as_ref() {
+            for email in emails {
+                repo.save_email(email);
+            }
+        }
+    }
+
     pub fn new(config: Config) -> Result<Self, String> {
         let log_level = std::env::var("EWS_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -325,25 +378,48 @@ impl EwsSkill {
                 None => return skill::ToolResult::err("graph client not initialized".to_string()),
             };
             let folder = folder_name.unwrap_or_else(|| "inbox".to_string());
-            return match client.list_emails(
-                &folder,
-                limit.unwrap_or(50),
-                unread_only.unwrap_or(false),
-            ) {
-                Ok(emails) => skill::ToolResult::ok(serde_json::json!({
-                    "emails": emails.into_iter().map(|e| serde_json::json!({
-                        "id": e.id,
-                        "subject": e.subject,
-                        "sender_name": e.sender_name,
-                        "sender_email": e.sender_email,
-                        "is_read": e.is_read,
-                        "has_attachments": e.has_attachments,
-                        "importance": e.importance,
-                        "datetime_received": e.datetime_received,
-                    })).collect::<Vec<_>>()
-                })),
+            let limit = limit.unwrap_or(50);
+            let unread_only = unread_only.unwrap_or(false);
+
+            if let Some(repo) = self.repository.as_ref() {
+                if let Some(folder_id) = self.graph_cache_folder_id(&folder) {
+                    let cached = repo.list_emails(&folder_id, limit, unread_only);
+                    if !cached.is_empty() {
+                        return skill::ToolResult::ok(serde_json::json!({
+                            "emails": cached.into_iter().map(|e| serde_json::json!({
+                                "id": e.id,
+                                "subject": e.subject,
+                                "sender_name": e.sender_name,
+                                "sender_email": e.sender_email,
+                                "is_read": e.is_read,
+                                "has_attachments": e.has_attachments,
+                                "importance": e.importance,
+                                "datetime_received": e.datetime_received,
+                            })).collect::<Vec<_>>()
+                        }));
+                    }
+                }
+            }
+
+            return match client.list_emails(&folder, limit, unread_only) {
+                Ok(emails) => {
+                    self.graph_save_folder_meta(&folder);
+                    self.graph_save_emails_to_cache(&emails);
+                    skill::ToolResult::ok(serde_json::json!({
+                        "emails": emails.into_iter().map(|e| serde_json::json!({
+                            "id": e.id,
+                            "subject": e.subject,
+                            "sender_name": e.sender_name,
+                            "sender_email": e.sender_email,
+                            "is_read": e.is_read,
+                            "has_attachments": e.has_attachments,
+                            "importance": e.importance,
+                            "datetime_received": e.datetime_received,
+                        })).collect::<Vec<_>>()
+                    }))
+                }
                 Err(e) => skill::ToolResult::err(e),
-            };
+            }
         }
 
         match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
@@ -354,26 +430,49 @@ impl EwsSkill {
 
     pub fn read_email(&self, email_id: String) -> skill::ToolResult {
         if self.protocol == "graph" {
+            if let Some(repo) = self.repository.as_ref() {
+                if let Some(email) = repo.get_email(&email_id) {
+                    return skill::ToolResult::ok(serde_json::json!({
+                        "id": email.id,
+                        "subject": email.subject,
+                        "sender_name": email.sender_name,
+                        "sender_email": email.sender_email,
+                        "to_recipients": email.to_recipients,
+                        "cc_recipients": email.cc_recipients,
+                        "body_text": email.body_text,
+                        "body_html": email.body_html,
+                        "is_read": email.is_read,
+                        "has_attachments": email.has_attachments,
+                        "importance": email.importance,
+                        "datetime_received": email.datetime_received,
+                        "datetime_sent": email.datetime_sent,
+                    }));
+                }
+            }
+
             let client = match self.graph_client.as_ref() {
                 Some(c) => c,
                 None => return skill::ToolResult::err("graph client not initialized".to_string()),
             };
             return match client.read_email(&email_id) {
-                Ok(email) => skill::ToolResult::ok(serde_json::json!({
-                    "id": email.id,
-                    "subject": email.subject,
-                    "sender_name": email.sender_name,
-                    "sender_email": email.sender_email,
-                    "to_recipients": email.to_recipients,
-                    "cc_recipients": email.cc_recipients,
-                    "body_text": email.body_text,
-                    "body_html": email.body_html,
-                    "is_read": email.is_read,
-                    "has_attachments": email.has_attachments,
-                    "importance": email.importance,
-                    "datetime_received": email.datetime_received,
-                    "datetime_sent": email.datetime_sent,
-                })),
+                Ok(email) => {
+                    self.graph_save_emails_to_cache(std::slice::from_ref(&email));
+                    skill::ToolResult::ok(serde_json::json!({
+                        "id": email.id,
+                        "subject": email.subject,
+                        "sender_name": email.sender_name,
+                        "sender_email": email.sender_email,
+                        "to_recipients": email.to_recipients,
+                        "cc_recipients": email.cc_recipients,
+                        "body_text": email.body_text,
+                        "body_html": email.body_html,
+                        "is_read": email.is_read,
+                        "has_attachments": email.has_attachments,
+                        "importance": email.importance,
+                        "datetime_received": email.datetime_received,
+                        "datetime_sent": email.datetime_sent,
+                    }))
+                }
                 Err(e) => skill::ToolResult::err(e),
             };
         }
@@ -397,6 +496,34 @@ impl EwsSkill {
         include_body: Option<bool>,
     ) -> skill::ToolResult {
         if self.protocol == "graph" {
+            let folder_id_for_cache = folder_name
+                .as_deref()
+                .and_then(|f| self.graph_cache_folder_id(f));
+            if let Some(repo) = self.repository.as_ref() {
+                let cached = repo.search_emails(
+                    query.as_deref(),
+                    subject.as_deref(),
+                    sender.as_deref(),
+                    date_from.as_deref(),
+                    date_to.as_deref(),
+                    folder_id_for_cache.as_deref(),
+                    limit.unwrap_or(50).clamp(1, 200),
+                    include_body.unwrap_or(true),
+                );
+                if !cached.is_empty() {
+                    return skill::ToolResult::ok(serde_json::json!({
+                        "results": cached.into_iter().map(|e| serde_json::json!({
+                            "id": e.id,
+                            "subject": e.subject,
+                            "sender_name": e.sender_name,
+                            "sender_email": e.sender_email,
+                            "is_read": e.is_read,
+                            "datetime_received": e.datetime_received,
+                        })).collect::<Vec<_>>()
+                    }));
+                }
+            }
+
             let client = match self.graph_client.as_ref() {
                 Some(c) => c,
                 None => return skill::ToolResult::err("graph client not initialized".to_string()),
@@ -432,16 +559,19 @@ impl EwsSkill {
                 limit: limit.unwrap_or(50).clamp(1, 200),
                 include_body: include_body.unwrap_or(true),
             }) {
-                Ok(results) => skill::ToolResult::ok(serde_json::json!({
-                    "results": results.into_iter().map(|e| serde_json::json!({
-                        "id": e.id,
-                        "subject": e.subject,
-                        "sender_name": e.sender_name,
-                        "sender_email": e.sender_email,
-                        "is_read": e.is_read,
-                        "datetime_received": e.datetime_received,
-                    })).collect::<Vec<_>>()
-                })),
+                Ok(results) => {
+                    self.graph_save_emails_to_cache(&results);
+                    skill::ToolResult::ok(serde_json::json!({
+                        "results": results.into_iter().map(|e| serde_json::json!({
+                            "id": e.id,
+                            "subject": e.subject,
+                            "sender_name": e.sender_name,
+                            "sender_email": e.sender_email,
+                            "is_read": e.is_read,
+                            "datetime_received": e.datetime_received,
+                        })).collect::<Vec<_>>()
+                    }))
+                }
                 Err(e) => skill::ToolResult::err(e),
             };
         }
@@ -463,23 +593,46 @@ impl EwsSkill {
 
     pub fn get_unread(&self, folder_name: Option<String>, limit: Option<i32>) -> skill::ToolResult {
         if self.protocol == "graph" {
+            let folder = folder_name.unwrap_or_else(|| "inbox".to_string());
+            let limit = limit.unwrap_or(20);
+
+            if let Some(repo) = self.repository.as_ref() {
+                if let Some(folder_id) = self.graph_cache_folder_id(&folder) {
+                    let cached = repo.list_emails(&folder_id, limit, true);
+                    if !cached.is_empty() {
+                        return skill::ToolResult::ok(serde_json::json!({
+                            "emails": cached.into_iter().map(|e| serde_json::json!({
+                                "id": e.id,
+                                "subject": e.subject,
+                                "sender_name": e.sender_name,
+                                "sender_email": e.sender_email,
+                                "datetime_received": e.datetime_received,
+                            })).collect::<Vec<_>>()
+                        }));
+                    }
+                }
+            }
+
             let client = match self.graph_client.as_ref() {
                 Some(c) => c,
                 None => return skill::ToolResult::err("graph client not initialized".to_string()),
             };
-            let folder = folder_name.unwrap_or_else(|| "inbox".to_string());
-            return match client.list_emails(&folder, limit.unwrap_or(20), true) {
-                Ok(emails) => skill::ToolResult::ok(serde_json::json!({
-                    "emails": emails.into_iter().map(|e| serde_json::json!({
-                        "id": e.id,
-                        "subject": e.subject,
-                        "sender_name": e.sender_name,
-                        "sender_email": e.sender_email,
-                        "datetime_received": e.datetime_received,
-                    })).collect::<Vec<_>>()
-                })),
+            return match client.list_emails(&folder, limit, true) {
+                Ok(emails) => {
+                    self.graph_save_folder_meta(&folder);
+                    self.graph_save_emails_to_cache(&emails);
+                    skill::ToolResult::ok(serde_json::json!({
+                        "emails": emails.into_iter().map(|e| serde_json::json!({
+                            "id": e.id,
+                            "subject": e.subject,
+                            "sender_name": e.sender_name,
+                            "sender_email": e.sender_email,
+                            "datetime_received": e.datetime_received,
+                        })).collect::<Vec<_>>()
+                    }))
+                }
                 Err(e) => skill::ToolResult::err(e),
-            };
+            }
         }
 
         match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
