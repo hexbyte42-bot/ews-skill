@@ -13,6 +13,7 @@ LOG_FILE="${PARITY_LOG_FILE:-/tmp/ews-skill-parity.log}"
 FAILED=0
 DAEMON_PID=""
 SKIPPED=0
+REQUIRE_EWS_AUTH="${PARITY_REQUIRE_EWS_AUTH:-false}"
 
 cleanup() {
   if [[ -n "${DAEMON_PID}" ]]; then
@@ -89,6 +90,9 @@ start_daemon() {
     if [[ -z "${EWS_URL:-}" && -z "${EWS_AUTODISCOVER:-}" ]]; then
       export EWS_AUTODISCOVER=true
     fi
+    if [[ -z "${EWS_AUTH_MODE:-}" ]]; then
+      export EWS_AUTH_MODE=ntlm
+    fi
   else
     if [[ -z "${GRAPH_CLIENT_ID:-}" && -n "${CLIENT_ID:-}" ]]; then
       export GRAPH_CLIENT_ID="${CLIENT_ID}"
@@ -138,11 +142,19 @@ run_protocol_suite() {
   echo "[PASS] ${protocol} health"
 
   if ! jq -e '.auth_ok == true' >/dev/null <<<"${health_out}"; then
-    echo "[SKIP] ${protocol}: auth_ok=false, skipping protocol checks"
-    SKIPPED=1
-    kill "${DAEMON_PID}" >/dev/null 2>&1 || true
-    DAEMON_PID=""
-    return
+    if [[ "${protocol}" == "ews" && "${REQUIRE_EWS_AUTH}" == "true" ]]; then
+      echo "[FAIL] ${protocol}: auth_ok=false with PARITY_REQUIRE_EWS_AUTH=true"
+      FAILED=1
+      kill "${DAEMON_PID}" >/dev/null 2>&1 || true
+      DAEMON_PID=""
+      return
+    else
+      echo "[SKIP] ${protocol}: auth_ok=false, skipping protocol checks"
+      SKIPPED=1
+      kill "${DAEMON_PID}" >/dev/null 2>&1 || true
+      DAEMON_PID=""
+      return
+    fi
   fi
 
   run_success_json "${protocol} server folders" 'has("folders") and (.folders|type=="array")' \
