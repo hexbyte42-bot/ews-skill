@@ -240,24 +240,14 @@ fn start_graph_background_sync_if_needed(skill: Arc<EwsSkill>) {
                 "graph background sync poller started"
             );
             loop {
+                if skill.graph_auth_ready() {
+                    let result = skill.sync();
+                    if !result.success {
+                        warn!(error = ?result.error, "graph background sync failed");
+                    }
+                }
+
                 thread::sleep(Duration::from_secs(interval));
-
-                let auth_ok = skill
-                    .health()
-                    .data
-                    .as_ref()
-                    .and_then(|v| v.get("auth_ok"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-
-                if !auth_ok {
-                    continue;
-                }
-
-                let result = skill.sync();
-                if !result.success {
-                    warn!(error = ?result.error, "graph background sync failed");
-                }
             }
         })
         .map_err(|e| {

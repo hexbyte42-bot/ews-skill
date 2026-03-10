@@ -201,8 +201,9 @@ impl Config {
         let content =
             std::fs::read_to_string(path).map_err(|e| ConfigError::LoadError(e.to_string()))?;
 
-        let config: Config =
+        let mut config: Config =
             toml::from_str(&content).map_err(|e| ConfigError::LoadError(e.to_string()))?;
+        config.mail_protocol = config.mail_protocol.to_lowercase();
 
         match config.mail_protocol.as_str() {
             "graph" => config.graph.validate()?,
