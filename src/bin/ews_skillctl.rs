@@ -642,7 +642,12 @@ fn graph_auth_from_env_or_daemon(client: &Client) -> Result<GraphAuthConfig, Str
 
     let response = client
         .call_method("graph.auth_config", json!({}))
-        .map_err(|e| format!("graph auth config unavailable from daemon: {}", e))?;
+        .map_err(|e| {
+            format!(
+                "missing GRAPH_TENANT_ID/GRAPH_CLIENT_ID in environment and daemon fallback failed (is ews_skilld running in graph mode?): {}",
+                e
+            )
+        })?;
 
     if let Some(err) = response.get("error") {
         let msg = err

@@ -26,31 +26,51 @@ cleanup() {
 }
 trap cleanup EXIT
 
+run_with_retry() {
+  local mode="$1"
+  shift
+
+  local out
+  local rc
+  local attempt=0
+  while true; do
+    set +e
+    out="$("$@" 2>&1)"
+    rc=$?
+    set -e
+
+    if [[ "${mode}" == "success" && ${rc} -eq 0 ]]; then
+      echo "${out}"
+      return 0
+    fi
+    if [[ "${mode}" == "failure" && ${rc} -ne 0 ]]; then
+      echo "${out}"
+      return 0
+    fi
+
+    if [[ ${attempt} -lt 3 && "${out}" == *"Resource temporarily unavailable"* ]]; then
+      attempt=$((attempt + 1))
+      sleep 0.2
+      continue
+    fi
+
+    echo "${out}"
+    return 1
+  done
+}
+
 run_success_json() {
   local header="$1"
   local check="$2"
   shift 2
 
   local out
-  local attempt=0
-  while true; do
-    set +e
-    out="$($@ 2>&1)"
-    local rc=$?
-    set -e
-    if [[ ${rc} -eq 0 ]]; then
-      break
-    fi
-    if [[ ${attempt} -lt 3 && "${out}" == *"Resource temporarily unavailable"* ]]; then
-      attempt=$((attempt + 1))
-      sleep 0.2
-      continue
-    fi
+  if ! out="$(run_with_retry success "$@")"; then
     echo "[FAIL] ${header}: command failed"
     echo "${out}"
     FAILED=1
     return
-  done
+  fi
 
   if ! jq -e "${check}" >/dev/null <<<"${out}"; then
     echo "[FAIL] ${header}: unexpected JSON"
@@ -68,12 +88,7 @@ run_failure_json() {
   shift 2
 
   local out
-  set +e
-  out="$($@ 2>&1)"
-  local rc=$?
-  set -e
-
-  if [[ ${rc} -eq 0 ]]; then
+  if ! out="$(run_with_retry failure "$@")"; then
     echo "[FAIL] ${header}: command unexpectedly succeeded"
     echo "${out}"
     FAILED=1
@@ -123,8 +138,20 @@ start_daemon() {
 
   MAIL_PROTOCOL="${protocol}" target/debug/ews_skilld --transport unix --socket "${SOCKET}" >"${LOG_FILE}" 2>&1 &
   DAEMON_PID=$!
-  sleep 2
-  return 0
+
+  for _ in $(seq 1 25); do
+    if [[ -S "${SOCKET}" ]]; then
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  echo "Failed to start daemon for ${protocol}; socket not ready: ${SOCKET}"
+  echo "See daemon log: ${LOG_FILE}"
+  FAILED=1
+  kill "${DAEMON_PID}" >/dev/null 2>&1 || true
+  DAEMON_PID=""
+  return 1
 }
 
 should_run_protocol() {
@@ -177,10 +204,17 @@ run_protocol_suite() {
       DAEMON_PID=""
       return
     elif [[ "${protocol}" == "ews" ]]; then
+      if [[ "${REQUIRE_EWS_AUTH}" == "true" ]]; then
+        echo "[FAIL] ${protocol}: auth_ok=false with PARITY_REQUIRE_EWS_AUTH=true"
+        FAILED=1
+        kill "${DAEMON_PID}" >/dev/null 2>&1 || true
+        DAEMON_PID=""
+        return
+      fi
       echo "[WARN] ${protocol}: auth_ok=false in health; continuing with functional checks"
     else
       echo "[SKIP] ${protocol}: auth_ok=false, skipping protocol checks"
-      SKIPPED=1
+      SKIPPED=$((SKIPPED + 1))
       kill "${DAEMON_PID}" >/dev/null 2>&1 || true
       DAEMON_PID=""
       return
@@ -214,7 +248,10 @@ run_protocol_suite() {
 }
 
 echo "Building binaries..."
-cargo build --bin ews_skilld --bin ews_skillctl >/dev/null
+if ! cargo build --bin ews_skilld --bin ews_skillctl >/dev/null; then
+  echo "Build failed; see compiler output above"
+  exit 1
+fi
 
 if should_run_protocol ews; then
   run_protocol_suite ews
@@ -226,8 +263,8 @@ fi
 
 echo ""
 if [[ ${FAILED} -eq 0 ]]; then
-  if [[ ${SKIPPED} -eq 1 ]]; then
-    echo "Parity matrix passed with skips"
+  if [[ ${SKIPPED} -gt 0 ]]; then
+    echo "Parity matrix passed with ${SKIPPED} skipped protocol suite(s)"
   else
     echo "Parity matrix passed"
   fi
