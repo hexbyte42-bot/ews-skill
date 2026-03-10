@@ -158,36 +158,48 @@ impl EwsSkill {
         let mut errors: Vec<String> = Vec::new();
         let mut failed_specs: HashSet<String> = HashSet::new();
 
-        for spec in &self.graph_sync_folders {
-            let folder_meta = match client.resolve_folder_for_sync(spec) {
-                Ok(v) => v,
-                Err(e) => {
-                    failed_specs.insert(spec.clone());
-                    errors.push(format!("{}: {}", spec, e));
+        let enrolled = repo.list_folders();
+        if enrolled.is_empty() {
+            for spec in &self.graph_sync_folders {
+                let folder_meta = match client.resolve_folder_for_sync(spec) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        failed_specs.insert(spec.clone());
+                        errors.push(format!("{}: {}", spec, e));
+                        continue;
+                    }
+                };
+
+                let folder_id = folder_meta.id.clone();
+                if !seen.insert(folder_id.clone()) {
                     continue;
                 }
-            };
 
-            let folder_id = folder_meta.id.clone();
-            let display_name = folder_meta.display_name.clone();
-            if !seen.insert(folder_id.clone()) {
-                continue;
+                repo.save_folder(&CachedFolder {
+                    id: folder_id.clone(),
+                    change_key: None,
+                    parent_id: None,
+                    display_name: folder_meta.display_name,
+                    unread_count: folder_meta.unread_count,
+                    total_count: folder_meta.total_count,
+                    synced_at: Utc::now(),
+                });
+
+                selected_folders.push(GraphSyncFolder {
+                    spec: spec.clone(),
+                    folder_id,
+                });
             }
-
-            repo.save_folder(&CachedFolder {
-                id: folder_id.clone(),
-                change_key: None,
-                parent_id: None,
-                display_name,
-                unread_count: folder_meta.unread_count,
-                total_count: folder_meta.total_count,
-                synced_at: Utc::now(),
-            });
-
-            selected_folders.push(GraphSyncFolder {
-                spec: spec.clone(),
-                folder_id,
-            });
+        } else {
+            for folder in enrolled {
+                if !seen.insert(folder.id.clone()) {
+                    continue;
+                }
+                selected_folders.push(GraphSyncFolder {
+                    spec: folder.display_name,
+                    folder_id: folder.id,
+                });
+            }
         }
 
         let mut synced_emails = 0usize;
@@ -549,8 +561,51 @@ impl EwsSkill {
 
     pub fn add_folder(&self, folder_name: String) -> skill::ToolResult {
         if self.protocol == "graph" {
+            let client = match self.graph_client.as_ref() {
+                Some(v) => v,
+                None => return skill::ToolResult::err("graph client not initialized".to_string()),
+            };
+            let repo = match self.repository.as_ref() {
+                Some(v) => v,
+                None => return skill::ToolResult::err("repository not initialized".to_string()),
+            };
+
+            let folder_meta = match client.resolve_folder_for_sync(&folder_name) {
+                Ok(v) => v,
+                Err(e) => return skill::ToolResult::err(e),
+            };
+
+            let folder_id = folder_meta.id.clone();
+            repo.save_folder(&CachedFolder {
+                id: folder_id.clone(),
+                change_key: None,
+                parent_id: None,
+                display_name: folder_meta.display_name,
+                unread_count: folder_meta.unread_count,
+                total_count: folder_meta.total_count,
+                synced_at: Utc::now(),
+            });
+
+            let emails = match client.list_emails(&folder_id, self.graph_sync_max_per_folder, false) {
+                Ok(v) => v,
+                Err(e) => return skill::ToolResult::err(e),
+            };
+            let mut synced_ids = HashSet::new();
+            for email in &emails {
+                synced_ids.insert(email.id.clone());
+                repo.save_email(email);
+            }
+            repo.remove_folder_rows_not_in(&folder_id, &synced_ids);
+            repo.save_sync_state(&SyncState {
+                folder_id,
+                sync_state: "graph_latest".to_string(),
+                last_sync_at: Utc::now(),
+            });
+
             return skill::ToolResult::ok(serde_json::json!({
-                "message": format!("Graph mode does not require folder enrollment; requested '{}'", folder_name)
+                "folder_name": folder_name,
+                "emails_synced": emails.len(),
+                "message": "Folder added and synced",
             }));
         }
         match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
