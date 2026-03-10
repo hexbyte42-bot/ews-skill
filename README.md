@@ -142,6 +142,10 @@ GRAPH_CLIENT_ID='...' GRAPH_TENANT_ID='...' ews_skillctl login
 ews_skillctl logout
 ```
 
+If `ews_skilld` is already running in Graph mode with tenant/client configured,
+`ews_skillctl login` can reuse daemon-side Graph auth config even when local
+`GRAPH_CLIENT_ID` / `GRAPH_TENANT_ID` are not exported.
+
 2. Run daemon manually (optional):
 
 ```bash
