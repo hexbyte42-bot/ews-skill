@@ -158,7 +158,14 @@ impl GraphClient {
             return self.get_folder(&normalized);
         }
 
-        if let Some(folder_id) = self.find_folder_id_by_display_name(trimmed)? {
+        let matches = self.find_folder_ids_by_display_name(trimmed)?;
+        if matches.len() > 1 {
+            return Err(format!(
+                "Multiple folders named '{}'; use folder id",
+                trimmed
+            ));
+        }
+        if let Some(folder_id) = matches.into_iter().next() {
             return self.get_folder(&folder_id);
         }
 
@@ -457,12 +464,20 @@ impl GraphClient {
     }
 
     fn find_folder_id_by_display_name(&self, target: &str) -> Result<Option<String>, String> {
+        Ok(self
+            .find_folder_ids_by_display_name(target)?
+            .into_iter()
+            .next())
+    }
+
+    fn find_folder_ids_by_display_name(&self, target: &str) -> Result<Vec<String>, String> {
         let target_norm = normalize_folder_name(target);
         let mut pending =
             vec!["https://graph.microsoft.com/v1.0/me/mailFolders?$top=100".to_string()];
         let mut visited_ids = HashSet::new();
         let mut pages_seen = 0usize;
         let mut folders_seen = 0usize;
+        let mut matched = Vec::new();
 
         while let Some(mut url) = pending.pop() {
             loop {
@@ -490,7 +505,7 @@ impl GraphClient {
 
                     let folder_id = folder.id;
                     if folder_name_matches(&folder.display_name, target, &target_norm) {
-                        return Ok(Some(folder_id));
+                        matched.push(folder_id.clone());
                     }
 
                     if folder.child_folder_count > 0 && visited_ids.insert(folder_id.clone()) {
@@ -509,7 +524,7 @@ impl GraphClient {
             }
         }
 
-        Ok(None)
+        Ok(matched)
     }
 }
 
