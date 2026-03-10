@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, TrySendError};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 use tracing::{error, info, warn};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -93,6 +94,8 @@ fn main() {
         }
     };
     let skill = Arc::new(skill);
+
+    start_graph_background_sync_if_needed(Arc::clone(&skill));
 
     let Transport::Unix(socket_path) = options.transport;
     info!(socket = %socket_path.display(), "ews_skilld started (unix socket JSON-RPC)");
@@ -217,6 +220,52 @@ fn run_unix_socket(skill: Arc<EwsSkill>, socket_path: &Path) -> Result<(), Strin
     }
 
     Ok(())
+}
+
+fn start_graph_background_sync_if_needed(skill: Arc<EwsSkill>) {
+    if !skill.is_graph_mode() {
+        return;
+    }
+
+    let interval = skill.graph_poll_interval_seconds().unwrap_or(0);
+    if interval == 0 {
+        info!("graph background sync disabled (poll interval is 0)");
+        return;
+    }
+
+    thread::Builder::new()
+        .name("ews-skilld-graph-poller".to_string())
+        .spawn(move || {
+            info!(
+                interval_seconds = interval,
+                "graph background sync poller started"
+            );
+            loop {
+                thread::sleep(Duration::from_secs(interval));
+
+                let auth_ok = skill
+                    .health()
+                    .data
+                    .as_ref()
+                    .and_then(|v| v.get("auth_ok"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+
+                if !auth_ok {
+                    continue;
+                }
+
+                let result = skill.sync();
+                if !result.success {
+                    warn!(error = ?result.error, "graph background sync failed");
+                }
+            }
+        })
+        .map_err(|e| {
+            warn!("failed to start graph poller thread: {}", e);
+            e
+        })
+        .ok();
 }
 
 fn handle_unix_client(skill: &EwsSkill, stream: UnixStream) -> Result<(), String> {

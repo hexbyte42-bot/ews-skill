@@ -39,6 +39,7 @@ pub struct EwsSkill {
     graph_sync_folders: Vec<String>,
     graph_sync_max_per_folder: i32,
     graph_sync_lock: Option<Mutex<()>>,
+    graph_poll_interval_seconds: u64,
 }
 
 impl EwsSkill {
@@ -166,6 +167,7 @@ impl EwsSkill {
                 graph_sync_folders: config.sync.folders.clone(),
                 graph_sync_max_per_folder,
                 graph_sync_lock: Some(Mutex::new(())),
+                graph_poll_interval_seconds: config.sync.interval_seconds,
             });
         }
 
@@ -229,7 +231,20 @@ impl EwsSkill {
             graph_sync_folders: Vec::new(),
             graph_sync_max_per_folder: 0,
             graph_sync_lock: None,
+            graph_poll_interval_seconds: 0,
         })
+    }
+
+    pub fn is_graph_mode(&self) -> bool {
+        self.protocol == "graph"
+    }
+
+    pub fn graph_poll_interval_seconds(&self) -> Option<u64> {
+        if self.is_graph_mode() {
+            Some(self.graph_poll_interval_seconds)
+        } else {
+            None
+        }
     }
 
     fn sync_graph_now(&self) -> Result<Value, String> {

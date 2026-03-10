@@ -86,6 +86,7 @@ Behavior notes
   - default: `30` days (`EWS_CLI_SEARCH_DEFAULT_DAYS`)
   - use `--no-date-limit` to disable per query
 - `MAIL_PROTOCOL=graph` supports `health/list_server_folders/list_synced_folders/list/read/search/send/move/delete/mark_read`.
+- In Graph mode, background polling syncs local cache using `EWS_POLL_INTERVAL_SECONDS`.
 - In Graph mode, `email_sync_now` syncs local cache for folders configured in `EWS_SYNC_FOLDERS` (latest `GRAPH_SYNC_MAX_PER_FOLDER` per folder, max 200).
 - In Graph mode, `email_add_folder` enrolls and immediately syncs that folder.
 
