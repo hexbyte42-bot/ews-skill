@@ -240,10 +240,14 @@ impl EwsSkill {
     }
 
     pub fn graph_poll_interval_seconds(&self) -> Option<u64> {
-        if self.is_graph_mode() {
-            Some(self.graph_poll_interval_seconds)
-        } else {
+        if !self.is_graph_mode() {
+            return None;
+        }
+
+        if self.graph_poll_interval_seconds == 0 {
             None
+        } else {
+            Some(self.graph_poll_interval_seconds)
         }
     }
 

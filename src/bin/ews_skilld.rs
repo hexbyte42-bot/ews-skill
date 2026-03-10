@@ -227,11 +227,10 @@ fn start_graph_background_sync_if_needed(skill: Arc<EwsSkill>) {
         return;
     }
 
-    let interval = skill.graph_poll_interval_seconds().unwrap_or(0);
-    if interval == 0 {
+    let Some(interval) = skill.graph_poll_interval_seconds() else {
         info!("graph background sync disabled (poll interval is 0)");
         return;
-    }
+    };
 
     thread::Builder::new()
         .name("ews-skilld-graph-poller".to_string())
