@@ -42,6 +42,35 @@ pub struct EwsSkill {
 }
 
 impl EwsSkill {
+    fn normalize_error_message(error: &str) -> String {
+        if error.starts_with("[E_") {
+            return error.to_string();
+        }
+
+        let lower = error.to_ascii_lowercase();
+        let code = if lower.contains("auth") || lower.contains("login") || lower.contains("token") {
+            "E_AUTH"
+        } else if lower.contains("not found") || lower.contains("missing") {
+            "E_NOT_FOUND"
+        } else if lower.contains("sync") {
+            "E_SYNC"
+        } else if lower.contains("busy") || lower.contains("temporarily unavailable") {
+            "E_BUSY"
+        } else {
+            "E_INTERNAL"
+        };
+        format!("[{}] {}", code, error)
+    }
+
+    fn normalize_tool_result(&self, mut result: skill::ToolResult) -> skill::ToolResult {
+        if !result.success {
+            if let Some(err) = result.error.as_deref() {
+                result.error = Some(Self::normalize_error_message(err));
+            }
+        }
+        result
+    }
+
     fn graph_cache_folder_id(&self, folder_spec: &str) -> Option<String> {
         let repo = self.repository.as_ref()?;
         let spec = folder_spec.trim();
@@ -814,11 +843,13 @@ impl EwsSkill {
                         .unwrap_or((0, 0, 0));
                     skill::ToolResult::ok(serde_json::json!({
                         "backend": "graph",
+                        "ews_url": Value::Null,
                         "status": status,
                         "auth_ok": ok,
                         "inbox_found": ok,
                         "initial_sync_in_progress": false,
                         "progress": format!("{}/{} folders", synced_folders, total_folders),
+                        "cached_folders": total_folders,
                         "synced_folders": synced_folders,
                         "total_folders": total_folders,
                         "cached_emails": cached_emails,
@@ -830,10 +861,18 @@ impl EwsSkill {
             };
         }
 
-        match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
+        let mut result = match self.email_skill.as_ref().and_then(|s| s.lock().ok()) {
             Some(skill) => skill.health(),
-            None => skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+            None => return skill::ToolResult::err("failed to acquire email skill lock".to_string()),
+        };
+
+        if let Some(data) = result.data.as_mut() {
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("backend".to_string(), serde_json::json!("ews"));
+            }
         }
+
+        result
     }
 
     pub fn get_tools() -> Vec<serde_json::Value> {
@@ -841,7 +880,7 @@ impl EwsSkill {
     }
 
     pub fn execute_tool(&self, tool_name: &str, args: Value) -> skill::ToolResult {
-        match tool_name {
+        let result = match tool_name {
             "email_health" => self.health(),
             "email_list_server_folders" => self.list_server_folders(),
             "email_list_synced_folders" => self.list_synced_folders(),
@@ -1012,7 +1051,9 @@ impl EwsSkill {
                 self.add_folder(folder_name)
             }
             _ => skill::ToolResult::err(format!("unknown tool: {}", tool_name)),
-        }
+        };
+
+        self.normalize_tool_result(result)
     }
 }
 
