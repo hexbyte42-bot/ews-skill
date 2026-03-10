@@ -237,7 +237,11 @@ run_protocol_suite() {
         DAEMON_PID=""
         return
       fi
-      echo "[WARN] ${protocol}: auth_ok=false in health; continuing with functional checks"
+      echo "[SKIP] ${protocol}: auth_ok=false, skipping protocol checks"
+      SKIPPED=$((SKIPPED + 1))
+      kill "${DAEMON_PID}" >/dev/null 2>&1 || true
+      DAEMON_PID=""
+      return
     else
       echo "[SKIP] ${protocol}: auth_ok=false, skipping protocol checks"
       SKIPPED=$((SKIPPED + 1))
