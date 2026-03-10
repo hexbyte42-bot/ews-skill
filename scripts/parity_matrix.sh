@@ -16,6 +16,12 @@ SKIPPED=0
 REQUIRE_EWS_AUTH="${PARITY_REQUIRE_EWS_AUTH:-false}"
 REQUIRE_GRAPH_AUTH="${PARITY_REQUIRE_GRAPH_AUTH:-false}"
 PARITY_PROTOCOL="${PARITY_PROTOCOL:-both}"
+PARITY_PROFILE="${PARITY_PROFILE:-debug}"
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+BIN_DIR="${TARGET_DIR}/${PARITY_PROFILE}"
+DAEMON_BIN="${PARITY_DAEMON_BIN:-${BIN_DIR}/ews_skilld}"
+CTL_BIN="${PARITY_CTL_BIN:-${BIN_DIR}/ews_skillctl}"
+CURRENT_LOG_FILE="${LOG_FILE}"
 
 cleanup() {
   if [[ -n "${DAEMON_PID}" ]]; then
@@ -108,11 +114,15 @@ run_failure_json() {
 start_daemon() {
   local protocol="$1"
   rm -f "${SOCKET}"
+  CURRENT_LOG_FILE="${LOG_FILE%.*}-${protocol}.log"
+  if [[ "${CURRENT_LOG_FILE}" == "${LOG_FILE}" ]]; then
+    CURRENT_LOG_FILE="${LOG_FILE}-${protocol}"
+  fi
 
   if [[ "${protocol}" == "ews" ]]; then
     if [[ -z "${EWS_EMAIL:-}" || -z "${EWS_PASSWORD:-}" ]]; then
       echo "Skipping EWS: EWS_EMAIL/EWS_PASSWORD not set"
-      return 1
+      return 10
     fi
     if [[ -z "${EWS_USERNAME:-}" ]]; then
       export EWS_USERNAME="${EWS_EMAIL}"
@@ -132,11 +142,11 @@ start_daemon() {
     fi
     if [[ -z "${GRAPH_CLIENT_ID:-}" || -z "${GRAPH_TENANT_ID:-}" ]]; then
       echo "Skipping Graph: GRAPH_CLIENT_ID/GRAPH_TENANT_ID not set"
-      return 1
+      return 10
     fi
   fi
 
-  MAIL_PROTOCOL="${protocol}" target/debug/ews_skilld --transport unix --socket "${SOCKET}" >"${LOG_FILE}" 2>&1 &
+  MAIL_PROTOCOL="${protocol}" "${DAEMON_BIN}" --transport unix --socket "${SOCKET}" >"${CURRENT_LOG_FILE}" 2>&1 &
   DAEMON_PID=$!
 
   for _ in $(seq 1 25); do
@@ -147,11 +157,11 @@ start_daemon() {
   done
 
   echo "Failed to start daemon for ${protocol}; socket not ready: ${SOCKET}"
-  echo "See daemon log: ${LOG_FILE}"
+  echo "See daemon log: ${CURRENT_LOG_FILE}"
   FAILED=1
   kill "${DAEMON_PID}" >/dev/null 2>&1 || true
   DAEMON_PID=""
-  return 1
+  return 11
 }
 
 should_run_protocol() {
@@ -172,12 +182,28 @@ run_protocol_suite() {
   echo ""
   echo "== Protocol: ${protocol} =="
 
-  if ! start_daemon "${protocol}"; then
+  set +e
+  start_daemon "${protocol}"
+  local start_rc=$?
+  set -e
+  if [[ ${start_rc} -ne 0 ]]; then
+    if [[ ${start_rc} -eq 10 ]]; then
+      if [[ "${protocol}" == "ews" && "${REQUIRE_EWS_AUTH}" == "true" ]]; then
+        echo "[FAIL] ${protocol}: required env for strict EWS auth mode is missing"
+        FAILED=1
+      elif [[ "${protocol}" == "graph" && "${REQUIRE_GRAPH_AUTH}" == "true" ]]; then
+        echo "[FAIL] ${protocol}: required env for strict Graph auth mode is missing"
+        FAILED=1
+      else
+        echo "[SKIP] ${protocol}: start prerequisites missing"
+        SKIPPED=$((SKIPPED + 1))
+      fi
+    fi
     return
   fi
 
   local health_out
-  if ! health_out="$(target/debug/ews_skillctl --json --socket "${SOCKET}" health 2>&1)"; then
+  if ! health_out="$("${CTL_BIN}" --json --socket "${SOCKET}" health 2>&1)"; then
     echo "[FAIL] ${protocol} health: command failed"
     echo "${health_out}"
     FAILED=1
@@ -222,25 +248,25 @@ run_protocol_suite() {
   fi
 
   run_success_json "${protocol} server folders" 'has("folders") and (.folders|type=="array")' \
-    target/debug/ews_skillctl --json --socket "${SOCKET}" call email_list_server_folders
+    "${CTL_BIN}" --json --socket "${SOCKET}" call email_list_server_folders
 
   run_success_json "${protocol} synced folders" 'has("folders") and (.folders|type=="array")' \
-    target/debug/ews_skillctl --json --socket "${SOCKET}" call email_list_synced_folders
+    "${CTL_BIN}" --json --socket "${SOCKET}" call email_list_synced_folders
 
   run_success_json "${protocol} sync-now" 'has("message") and (.message|type=="string")' \
-    target/debug/ews_skillctl --json --socket "${SOCKET}" sync-now
+    "${CTL_BIN}" --json --socket "${SOCKET}" sync-now
 
   run_success_json "${protocol} list inbox" 'has("emails") and (.emails|type=="array")' \
-    target/debug/ews_skillctl --json --socket "${SOCKET}" list --folder inbox --limit 3
+    "${CTL_BIN}" --json --socket "${SOCKET}" list --folder inbox --limit 3
 
   run_success_json "${protocol} unread inbox" 'has("emails") and (.emails|type=="array")' \
-    target/debug/ews_skillctl --json --socket "${SOCKET}" call email_get_unread --arg folder_name=inbox --arg limit=3
+    "${CTL_BIN}" --json --socket "${SOCKET}" call email_get_unread --arg folder_name=inbox --arg limit=3
 
   run_success_json "${protocol} search inbox" 'has("results") and (.results|type=="array")' \
-    target/debug/ews_skillctl --json --socket "${SOCKET}" search --query test --folder inbox --limit 3 --no-date-limit
+    "${CTL_BIN}" --json --socket "${SOCKET}" search --query test --folder inbox --limit 3 --no-date-limit
 
   run_failure_json "${protocol} error format" '.error | startswith("[E_")' \
-    target/debug/ews_skillctl --json --socket "${SOCKET}" call not_a_tool
+    "${CTL_BIN}" --json --socket "${SOCKET}" call not_a_tool
 
   kill "${DAEMON_PID}" >/dev/null 2>&1 || true
   DAEMON_PID=""
@@ -248,8 +274,19 @@ run_protocol_suite() {
 }
 
 echo "Building binaries..."
-if ! cargo build --bin ews_skilld --bin ews_skillctl >/dev/null; then
+build_args=(build --bin ews_skilld --bin ews_skillctl)
+if [[ "${PARITY_PROFILE}" != "debug" ]]; then
+  build_args+=(--profile "${PARITY_PROFILE}")
+fi
+if ! cargo "${build_args[@]}" >/dev/null; then
   echo "Build failed; see compiler output above"
+  exit 1
+fi
+
+if [[ ! -x "${DAEMON_BIN}" || ! -x "${CTL_BIN}" ]]; then
+  echo "Built binaries not found/executable"
+  echo "DAEMON_BIN=${DAEMON_BIN}"
+  echo "CTL_BIN=${CTL_BIN}"
   exit 1
 fi
 
