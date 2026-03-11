@@ -418,7 +418,7 @@ impl EwsSkill {
             None => return skill::ToolResult::err("repository not initialized".to_string()),
         };
 
-        let folders = repo.list_folders();
+        let folders = repo.list_folders_with_cached_counts();
         skill::ToolResult::ok(serde_json::json!({
             "folders": folders.into_iter().map(|f| serde_json::json!({
                 "id": f.id,

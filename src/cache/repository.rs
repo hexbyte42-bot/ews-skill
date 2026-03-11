@@ -88,6 +88,43 @@ impl Repository {
         out
     }
 
+    pub fn list_folders_with_cached_counts(&self) -> Vec<CachedFolder> {
+        let conn = self.db.connection();
+        let conn = conn.lock();
+
+        let mut stmt = match conn.prepare(
+            r#"SELECT
+                    f.id,
+                    f.change_key,
+                    f.parent_id,
+                    f.display_name,
+                    COALESCE((SELECT COUNT(*) FROM emails e WHERE e.folder_id = f.id AND e.is_read = 0), 0) AS unread_count,
+                    COALESCE((SELECT COUNT(*) FROM emails e WHERE e.folder_id = f.id), 0) AS total_count,
+                    f.synced_at
+               FROM folders f
+               ORDER BY f.display_name"#,
+        ) {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                error!("failed to prepare list_folders_with_cached_counts query: {}", e);
+                return Vec::new();
+            }
+        };
+
+        let out = match stmt.query_map([], Self::row_to_folder) {
+            Ok(rows) => rows
+                .filter_map(|r| r.ok())
+                .filter(|f| !f.id.trim().is_empty())
+                .collect(),
+            Err(e) => {
+                error!("failed to list folders with cached counts: {}", e);
+                Vec::new()
+            }
+        };
+
+        out
+    }
+
     pub fn get_email(&self, email_id: &str) -> Option<CachedEmail> {
         let conn = self.db.connection();
         let conn = conn.lock();
@@ -599,6 +636,57 @@ fn push_unique(out: &mut Vec<String>, value: String) {
 #[cfg(test)]
 mod tests {
     use super::email_id_candidates;
+    use super::Repository;
+    use crate::cache::models::{CachedEmail, CachedFolder};
+    use crate::cache::Database;
+    use chrono::Utc;
+    use std::path::PathBuf;
+
+    fn test_repo() -> Repository {
+        let mut path: PathBuf = std::env::temp_dir();
+        let unique = format!(
+            "ews_skill_repo_test_{}_{}.db",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        );
+        path.push(unique);
+
+        let db = Database::new(&path).expect("create test db");
+        Repository::new(db)
+    }
+
+    fn test_folder(id: &str, display_name: &str) -> CachedFolder {
+        CachedFolder {
+            id: id.to_string(),
+            change_key: None,
+            parent_id: None,
+            display_name: display_name.to_string(),
+            unread_count: 999,
+            total_count: 999,
+            synced_at: Utc::now(),
+        }
+    }
+
+    fn test_email(id: &str, folder_id: &str, is_read: bool) -> CachedEmail {
+        CachedEmail {
+            id: id.to_string(),
+            change_key: None,
+            folder_id: folder_id.to_string(),
+            subject: "subject".to_string(),
+            sender_name: "sender".to_string(),
+            sender_email: "sender@example.com".to_string(),
+            to_recipients: Vec::new(),
+            cc_recipients: Vec::new(),
+            body_text: String::new(),
+            body_html: None,
+            has_attachments: false,
+            is_read,
+            importance: "normal".to_string(),
+            datetime_received: Some(Utc::now()),
+            datetime_sent: Some(Utc::now()),
+            cached_at: Utc::now(),
+        }
+    }
 
     #[test]
     fn email_id_candidates_include_trimmed_and_unwrapped() {
@@ -611,5 +699,42 @@ mod tests {
     fn email_id_candidates_handle_plus_as_space() {
         let ids = email_id_candidates("AAMkA C+DE=");
         assert!(ids.iter().any(|v| v == "AAMkA+C+DE="));
+    }
+
+    #[test]
+    fn list_folders_with_cached_counts_reflects_email_table() {
+        let repo = test_repo();
+        repo.save_folder(&test_folder("inbox", "Inbox"));
+
+        repo.save_email(&test_email("m1", "inbox", false));
+        repo.save_email(&test_email("m2", "inbox", true));
+
+        let folders = repo.list_folders_with_cached_counts();
+        let inbox = folders
+            .into_iter()
+            .find(|f| f.id == "inbox")
+            .expect("inbox folder");
+        assert_eq!(inbox.total_count, 2);
+        assert_eq!(inbox.unread_count, 1);
+    }
+
+    #[test]
+    fn list_folders_with_cached_counts_tracks_mark_read_and_delete() {
+        let repo = test_repo();
+        repo.save_folder(&test_folder("inbox", "Inbox"));
+
+        repo.save_email(&test_email("m1", "inbox", false));
+        repo.save_email(&test_email("m2", "inbox", false));
+
+        repo.mark_read("m1", true);
+        repo.delete_email("m2");
+
+        let folders = repo.list_folders_with_cached_counts();
+        let inbox = folders
+            .into_iter()
+            .find(|f| f.id == "inbox")
+            .expect("inbox folder");
+        assert_eq!(inbox.total_count, 1);
+        assert_eq!(inbox.unread_count, 0);
     }
 }
