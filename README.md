@@ -1,15 +1,48 @@
 # ews-skill
 
-EWS email skill for OpenClaw with Outlook-style local cache (SQLite), autodiscover, and NTLM/Basic auth support.
+Exchange email skill for OpenClaw with a local SQLite cache, supporting both EWS (on-prem Exchange) and Microsoft Graph (Microsoft 365).
 
 ## Features
 
+- Protocol support: `MAIL_PROTOCOL=ews` and `MAIL_PROTOCOL=graph`
 - On-prem Exchange via EWS SOAP
+- Microsoft 365 via Graph API (delegated OAuth)
 - Local cache in SQLite for fast AI reads
 - Server-side windowed sync with incremental cache updates
 - Autodiscover support
 - Auth modes: `basic`, `ntlm`
 - OpenClaw-style tool definitions + dispatcher
+
+## Protocol support
+
+### EWS mode (on-prem Exchange)
+
+```bash
+MAIL_PROTOCOL=ews
+EWS_EMAIL=user@company.com
+EWS_PASSWORD=secret
+EWS_AUTH_MODE=ntlm
+EWS_AUTODISCOVER=true
+```
+
+### Graph mode (Microsoft 365)
+
+```bash
+MAIL_PROTOCOL=graph
+GRAPH_CLIENT_ID=your-client-id
+GRAPH_TENANT_ID=your-tenant-id
+```
+
+Graph delegated login/logout:
+
+```bash
+ews_skillctl login
+ews_skillctl logout
+```
+
+If `ews_skilld` is already running in Graph mode with tenant/client configured,
+`ews_skillctl login` can reuse daemon-side Graph auth config even when local
+`GRAPH_CLIENT_ID` / `GRAPH_TENANT_ID` are not exported.
 
 ## Quick start
 
@@ -111,12 +144,6 @@ $SKILL_PATH/bin/ews_skillctl
 1. Export runtime env vars:
 
 ```bash
-export EWS_EMAIL='user@company.com'
-export EWS_PASSWORD='***'
-export EWS_USERNAME='DOMAIN\user'   # optional, defaults to EWS_EMAIL
-export EWS_AUTH_MODE='ntlm'          # basic | ntlm
-export EWS_AUTODISCOVER=true         # or set EWS_URL
-# export EWS_URL='https://mail.company.com/EWS/Exchange.asmx'
 export EWS_LOG_LEVEL='info'          # trace | debug | info | warn | error
 
 # Retry policy for network/server transient failures
@@ -124,27 +151,28 @@ export EWS_RETRY_MAX_ATTEMPTS=5
 export EWS_RETRY_BASE_MS=500
 export EWS_RETRY_MAX_BACKOFF_MS=10000
 
-# Protocol selection: ews (default) | graph
+# Shared sync controls
+export EWS_SYNC_FOLDERS='inbox,sentitems'
+export EWS_SYNC_INTERVAL_SECONDS=30
+
+# Protocol selection: ews | graph
 export MAIL_PROTOCOL='ews'
 
-# For Graph delegated mode (single-tenant)
+# EWS-only
+export EWS_EMAIL='user@company.com'
+export EWS_PASSWORD='***'
+export EWS_USERNAME='DOMAIN\user'   # optional, defaults to EWS_EMAIL
+export EWS_AUTH_MODE='ntlm'          # basic | ntlm
+export EWS_AUTODISCOVER=true         # or set EWS_URL
+# export EWS_URL='https://mail.company.com/EWS/Exchange.asmx'
+export EWS_SYNC_LOOKBACK_DAYS=7
+
+# Graph-only
 # export MAIL_PROTOCOL='graph'
 # export GRAPH_CLIENT_ID='xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 # export GRAPH_TENANT_ID='xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
-# export EWS_SYNC_FOLDERS='inbox,sentitems'   # also used as Graph cache-sync folder subset
-# export GRAPH_SYNC_MAX_PER_FOLDER=200         # latest N messages per synced Graph folder (max 200)
+# export GRAPH_SYNC_MAX_PER_FOLDER=200  # latest N per synced folder (max 200)
 ```
-
-Graph delegated login/logout (required before Graph protocol health/list/read/search/sync):
-
-```bash
-GRAPH_CLIENT_ID='...' GRAPH_TENANT_ID='...' ews_skillctl login
-ews_skillctl logout
-```
-
-If `ews_skilld` is already running in Graph mode with tenant/client configured,
-`ews_skillctl login` can reuse daemon-side Graph auth config even when local
-`GRAPH_CLIENT_ID` / `GRAPH_TENANT_ID` are not exported.
 
 2. Run daemon manually (optional):
 
@@ -336,15 +364,116 @@ If you are not using OpenClaw external process mode, the crate still exposes `Ew
 - `email_sync_now`
 - `email_add_folder`
 
-Protocol note:
+## Synchronization behavior
 
-- `MAIL_PROTOCOL=ews`: full current functionality.
-- `MAIL_PROTOCOL=graph`: delegated auth + tool parity is available for `health/list_server_folders/list_synced_folders/list/read/search/send/move/delete/mark_read`.
-- In Graph mode, background polling also syncs local cache (uses the same poll interval as `EWS_SYNC_INTERVAL_SECONDS`).
-- `EWS_SYNC_INTERVAL_SECONDS=0` disables Graph background polling (only on-demand sync via `email_sync_now` runs).
-- For periodic polling, use a positive interval; very small intervals can increase load significantly.
-- In Graph mode, `email_sync_now` performs immediate local cache sync for folders in `EWS_SYNC_FOLDERS` (latest `GRAPH_SYNC_MAX_PER_FOLDER` per folder).
-- In Graph mode, `email_add_folder` enrolls the folder in local sync scope and runs an immediate folder sync.
+### Shared behavior
+
+- `email_sync_now` triggers immediate sync.
+- `email_add_folder` enrolls a folder into sync scope and syncs it immediately.
+- `EWS_SYNC_FOLDERS` controls which folders are synced.
+- `EWS_SYNC_INTERVAL_SECONDS` controls background polling interval in both modes.
+  - In Graph mode, `EWS_SYNC_INTERVAL_SECONDS=0` disables background polling.
+
+### EWS-specific sync behavior
+
+- Uses EWS incremental synchronization state.
+- `EWS_SYNC_LOOKBACK_DAYS` limits sync window by age (default `7`, set `0` for unlimited history).
+
+### Graph-specific sync behavior
+
+- Uses latest-N sync per folder, not day-window sync.
+- `GRAPH_SYNC_MAX_PER_FOLDER` controls the per-folder cap (default `200`, max `200`).
+
+## Folder count behavior
+
+`email_list_synced_folders` returns counts derived from locally cached `emails` rows:
+
+- `total_count`: number of cached emails in the folder
+- `unread_count`: number of cached unread emails in the folder
+
+Example:
+
+```json
+{
+  "folders": [
+    {
+      "display_name": "inbox",
+      "total_count": 5,
+      "unread_count": 2
+    }
+  ]
+}
+```
+
+## Error handling
+
+Standard error format:
+
+```json
+{
+  "error": "[E_NOT_FOUND] Email not found",
+  "ok": false
+}
+```
+
+Common error codes:
+
+- `OK`: success
+- `E_BAD_ARGS`: invalid arguments
+- `E_AUTH`: authentication/login issue
+- `E_NOT_FOUND`: missing email/folder/resource
+- `E_SYNC`: sync operation failure
+- `E_BUSY`: temporary contention/busy state
+- `E_INTERNAL`: unexpected internal error
+
+Transient busy responses may include `retry_after_ms`. Client retry/backoff is built in; when running manually, retry after a short delay.
+
+## Configuration examples
+
+### EWS mode (on-prem Exchange)
+
+Recommended (AutoDiscover):
+
+```bash
+MAIL_PROTOCOL=ews
+EWS_EMAIL=user@company.com
+EWS_PASSWORD=secret
+EWS_AUTH_MODE=ntlm
+EWS_AUTODISCOVER=true
+EWS_SYNC_FOLDERS=inbox,sentitems
+EWS_SYNC_INTERVAL_SECONDS=30
+EWS_SYNC_LOOKBACK_DAYS=7
+```
+
+Alternative (manual URL):
+
+```bash
+MAIL_PROTOCOL=ews
+EWS_EMAIL=user@company.com
+EWS_PASSWORD=secret
+EWS_AUTH_MODE=ntlm
+EWS_AUTODISCOVER=false
+EWS_URL=https://mail.company.com/EWS/Exchange.asmx
+EWS_SYNC_FOLDERS=inbox,sentitems
+EWS_SYNC_INTERVAL_SECONDS=30
+```
+
+### Graph mode (Microsoft 365)
+
+```bash
+MAIL_PROTOCOL=graph
+GRAPH_CLIENT_ID=your-client-id
+GRAPH_TENANT_ID=your-tenant-id
+EWS_SYNC_FOLDERS=inbox,sentitems
+EWS_SYNC_INTERVAL_SECONDS=30
+GRAPH_SYNC_MAX_PER_FOLDER=200
+```
+
+Then authenticate:
+
+```bash
+ews_skillctl login
+```
 
 `email_delete` behavior:
 
