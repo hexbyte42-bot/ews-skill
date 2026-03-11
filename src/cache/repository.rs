@@ -98,15 +98,20 @@ impl Repository {
                     f.change_key,
                     f.parent_id,
                     f.display_name,
-                    COALESCE((SELECT COUNT(*) FROM emails e WHERE e.folder_id = f.id AND e.is_read = 0), 0) AS unread_count,
-                    COALESCE((SELECT COUNT(*) FROM emails e WHERE e.folder_id = f.id), 0) AS total_count,
+                    COALESCE(SUM(CASE WHEN e.is_read = 0 THEN 1 ELSE 0 END), 0) AS unread_count,
+                    COUNT(e.id) AS total_count,
                     f.synced_at
                FROM folders f
+               LEFT JOIN emails e ON e.folder_id = f.id
+               GROUP BY f.id, f.change_key, f.parent_id, f.display_name, f.synced_at
                ORDER BY f.display_name"#,
         ) {
             Ok(stmt) => stmt,
             Err(e) => {
-                error!("failed to prepare list_folders_with_cached_counts query: {}", e);
+                error!(
+                    "failed to prepare list_folders_with_cached_counts query: {}",
+                    e
+                );
                 return Vec::new();
             }
         };
@@ -517,13 +522,16 @@ impl Repository {
     }
 
     fn row_to_folder(row: &Row) -> rusqlite::Result<CachedFolder> {
+        let unread_count = clamp_i64_to_i32(row.get::<_, i64>(4)?);
+        let total_count = clamp_i64_to_i32(row.get::<_, i64>(5)?);
+
         Ok(CachedFolder {
             id: row.get(0)?,
             change_key: row.get(1)?,
             parent_id: row.get(2)?,
             display_name: row.get(3)?,
-            unread_count: row.get(4)?,
-            total_count: row.get(5)?,
+            unread_count,
+            total_count,
             synced_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
                 .map(|d| d.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now()),
@@ -633,6 +641,16 @@ fn push_unique(out: &mut Vec<String>, value: String) {
     }
 }
 
+fn clamp_i64_to_i32(value: i64) -> i32 {
+    if value > i32::MAX as i64 {
+        i32::MAX
+    } else if value < i32::MIN as i64 {
+        i32::MIN
+    } else {
+        value as i32
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::email_id_candidates;
@@ -640,17 +658,8 @@ mod tests {
     use crate::cache::models::{CachedEmail, CachedFolder};
     use crate::cache::Database;
     use chrono::Utc;
-    use std::path::PathBuf;
-
     fn test_repo() -> Repository {
-        let mut path: PathBuf = std::env::temp_dir();
-        let unique = format!(
-            "ews_skill_repo_test_{}_{}.db",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or(0)
-        );
-        path.push(unique);
-
+        let path = std::path::PathBuf::from(":memory:");
         let db = Database::new(&path).expect("create test db");
         Repository::new(db)
     }
