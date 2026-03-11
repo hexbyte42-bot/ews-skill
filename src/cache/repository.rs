@@ -448,16 +448,17 @@ impl Repository {
     }
 
     pub fn latest_sync_at(&self) -> Option<chrono::DateTime<Utc>> {
-        let conn = self.db.connection();
-        let conn = conn.lock();
+        let latest: Option<String> = {
+            let conn = self.db.connection();
+            let conn = conn.lock();
 
-        let latest: Option<String> = conn
-            .query_row(
+            conn.query_row(
                 "SELECT last_sync_at FROM sync_states ORDER BY last_sync_at DESC LIMIT 1",
                 [],
                 |row| row.get(0),
             )
-            .ok();
+            .ok()
+        };
 
         latest
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
