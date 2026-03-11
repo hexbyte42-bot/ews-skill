@@ -29,7 +29,8 @@ Configuration model
   - `EWS_SYNC_FOLDERS`
   - `EWS_SYNC_INTERVAL_SECONDS`
 - EWS-only:
-  - `EWS_EMAIL`, `EWS_PASSWORD`, `EWS_USERNAME`, `EWS_AUTH_MODE`
+  - `EWS_EMAIL`, `EWS_PASSWORD`, `EWS_AUTH_MODE`
+  - `EWS_USERNAME` (optional; defaults to `EWS_EMAIL`)
   - `EWS_AUTODISCOVER` or `EWS_URL`
   - `EWS_SYNC_LOOKBACK_DAYS`
 - Graph-only:
