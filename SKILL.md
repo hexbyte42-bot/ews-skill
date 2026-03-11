@@ -180,5 +180,4 @@ Troubleshooting
 
 References
 - Setup and operations: `README.md`
-- Release process: `docs/releasing.md`
 - Validation checklist: `references/openclaw-ops-checklist.md`
