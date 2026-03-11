@@ -44,6 +44,9 @@ Post-install agent flow
 Graph delegated login (single-tenant)
 - Set env: `MAIL_PROTOCOL=graph`, `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`
 - Run: `ews_skillctl login`
+  - Uses device code flow: command prints a URL and a short code.
+  - User opens the URL in any browser, enters the code, and signs in.
+  - Works on headless/remote servers; no local browser is required.
 - Clear token cache: `ews_skillctl logout`
 
 Configuration model
@@ -53,8 +56,9 @@ Configuration model
   - `EWS_SYNC_INTERVAL_SECONDS`
 - EWS-only:
   - `EWS_EMAIL`, `EWS_PASSWORD`, `EWS_AUTH_MODE`
+  - `EWS_AUTH_MODE`: `ntlm` (most common), `basic`
   - `EWS_USERNAME` (usually same as `EWS_EMAIL`; set explicitly if login name differs)
-  - `EWS_AUTODISCOVER` or `EWS_URL`
+  - `EWS_AUTODISCOVER=true` (try first); use `EWS_URL` only if autodiscovery fails or is blocked
   - `EWS_SYNC_LOOKBACK_DAYS`
 - Graph-only:
   - `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`
@@ -175,8 +179,8 @@ Troubleshooting
    - `ews_skillctl tools`
    - `ews_skillctl health`
 6. Validate required env in `<skill-path>/.env`:
-   - `EWS_EMAIL`, `EWS_PASSWORD`, `EWS_AUTH_MODE=ntlm`
-   - `EWS_SYNC_FOLDERS`, `EWS_SYNC_LOOKBACK_DAYS`
+   - EWS: `MAIL_PROTOCOL=ews`, `EWS_EMAIL`, `EWS_USERNAME`, `EWS_PASSWORD`, `EWS_AUTH_MODE`, `EWS_SYNC_FOLDERS`
+   - Graph: `MAIL_PROTOCOL=graph`, `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`, `EWS_SYNC_FOLDERS`
 7. Reinstall only as last option:
    - `bash scripts/install.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill"`
 
