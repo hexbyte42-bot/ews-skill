@@ -10,7 +10,11 @@ pub struct Database {
 
 impl Database {
     pub fn new(path: &PathBuf) -> SqlResult<Self> {
-        let conn = Connection::open(path)?;
+        let conn = if path.as_os_str() == ":memory:" {
+            Connection::open_in_memory()?
+        } else {
+            Connection::open(path)?
+        };
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
 
         let db = Self {
