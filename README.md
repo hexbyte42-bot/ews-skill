@@ -185,23 +185,23 @@ $SKILL_PATH/bin/ews_skilld --transport unix --socket /run/ews-skill/daemon.sock
 3. Optional smoke test (source checkout only):
 
 ```bash
-./scripts/smoke_test.sh
+./dev-scripts/smoke_test.sh
 
 # Optional write-path checks
-SMOKE_DO_WRITE=true ./scripts/smoke_test.sh
+SMOKE_DO_WRITE=true ./dev-scripts/smoke_test.sh
 
 # Optional delete behavior check:
 # default delete => Deleted Items, skip_trash=true => SoftDelete
-SMOKE_DO_WRITE=true SMOKE_TEST_DELETE_MODES=true ./scripts/smoke_test.sh
+SMOKE_DO_WRITE=true SMOKE_TEST_DELETE_MODES=true ./dev-scripts/smoke_test.sh
 
 # Protocol parity matrix (EWS + Graph, cache/server/error contract checks)
-./scripts/parity_matrix.sh
+./dev-scripts/parity_matrix.sh
 
 # Run EWS parity only (recommended for NTLM validation)
-PARITY_PROTOCOL=ews PARITY_REQUIRE_EWS_AUTH=true ./scripts/parity_matrix.sh
+PARITY_PROTOCOL=ews PARITY_REQUIRE_EWS_AUTH=true ./dev-scripts/parity_matrix.sh
 
 # Run Graph parity only
-PARITY_PROTOCOL=graph PARITY_REQUIRE_GRAPH_AUTH=true ./scripts/parity_matrix.sh
+PARITY_PROTOCOL=graph PARITY_REQUIRE_GRAPH_AUTH=true ./dev-scripts/parity_matrix.sh
 ```
 
 ### Use released binary with OpenClaw
@@ -277,7 +277,7 @@ Primary integration mode is external process:
 - systemd runs `ews_skilld` (Exchange sync + cache) over Unix socket
 - OpenClaw runs `ews_skillctl` CLI subcommands with `--json`
 
-For production rollout and validation, use `docs/openclaw-ops-checklist.md`.
+For production rollout and validation, use `references/openclaw-ops-checklist.md`.
 
 Why this is a good fit for OpenClaw:
 
