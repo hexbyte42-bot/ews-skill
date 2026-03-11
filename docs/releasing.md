@@ -44,4 +44,4 @@ After workflow completion, verify:
 
 - If a release fails `--check-ntlm`, mark it as not suitable for NTLM environments.
 
-Before release tagging, run the operational validation in `docs/openclaw-ops-checklist.md`.
+Before release tagging, run the operational validation in `references/openclaw-ops-checklist.md`.

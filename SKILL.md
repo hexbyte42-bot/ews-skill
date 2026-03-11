@@ -9,6 +9,14 @@ metadata: {"clawdbot":{"emoji":"📧","requires":{"bins":["ews_skillctl","ews_sk
 
 `ews_skillctl` is the primary CLI for OpenClaw and operators. It talks to `ews_skilld` over unix socket.
 
+Agent scope and safety rules
+- Prioritize `SKILL.md`, `README.md`, `references/*`, `scripts/install.sh`, and `scripts/uninstall.sh`.
+- Do not inspect `src/*` unless the user explicitly asks for code-level debugging or implementation changes.
+- After installation completes, always ask one routing question: "Is your mailbox Microsoft 365 (O365/Exchange Online) or On-Prem Exchange?"
+- Based on the answer, provide only the corresponding `.env` keys to configure and clearly list which values the user must fill.
+- Instruct users to edit `.env` manually on their machine; never request, collect, or echo passwords, tokens, client secrets, or other sensitive values in chat.
+- `.env` must never be committed; it is git-ignored in this repository.
+
 Protocol support
 - `MAIL_PROTOCOL=ews`: on-prem Exchange (EWS SOAP)
 - `MAIL_PROTOCOL=graph`: Microsoft 365 (Graph delegated auth)
@@ -18,9 +26,27 @@ Quick start
 - Edit `$HOME/.openclaw/workspace/skill/ews-skill/.env`
 - `sudo systemctl restart ews-skill-sync.service`
 
+Post-install agent flow
+- Ask: "Is your mailbox O365 (Microsoft 365) or On-Prem Exchange?"
+- If user says O365, guide `.env` with:
+  - `MAIL_PROTOCOL=graph`
+  - `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`
+  - shared sync keys (`EWS_SYNC_FOLDERS`, `EWS_SYNC_INTERVAL_SECONDS`)
+  - Graph-only sync option (optional `GRAPH_SYNC_MAX_PER_FOLDER`)
+- If user says On-Prem, guide `.env` with:
+  - `MAIL_PROTOCOL=ews`
+  - `EWS_EMAIL`, `EWS_USERNAME`, `EWS_PASSWORD`, `EWS_AUTH_MODE`
+  - `EWS_AUTODISCOVER` or `EWS_URL`
+  - shared sync keys (`EWS_SYNC_FOLDERS`, `EWS_SYNC_INTERVAL_SECONDS`)
+  - EWS-only sync option (optional `EWS_SYNC_LOOKBACK_DAYS`)
+- Never ask users to paste secret values into chat; use placeholders and tell them to fill secrets directly in `.env`.
+
 Graph delegated login (single-tenant)
 - Set env: `MAIL_PROTOCOL=graph`, `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`
 - Run: `ews_skillctl login`
+  - Uses device code flow: command prints a URL and a short code.
+  - User opens the URL in any browser, enters the code, and signs in.
+  - Works on headless/remote servers; no local browser is required.
 - Clear token cache: `ews_skillctl logout`
 
 Configuration model
@@ -30,8 +56,9 @@ Configuration model
   - `EWS_SYNC_INTERVAL_SECONDS`
 - EWS-only:
   - `EWS_EMAIL`, `EWS_PASSWORD`, `EWS_AUTH_MODE`
+  - `EWS_AUTH_MODE`: `ntlm` (most common), `basic`
   - `EWS_USERNAME` (usually same as `EWS_EMAIL`; set explicitly if login name differs)
-  - `EWS_AUTODISCOVER` or `EWS_URL`
+  - `EWS_AUTODISCOVER=true` (try first); use `EWS_URL` only if autodiscovery fails or is blocked
   - `EWS_SYNC_LOOKBACK_DAYS`
 - Graph-only:
   - `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`
@@ -152,12 +179,11 @@ Troubleshooting
    - `ews_skillctl tools`
    - `ews_skillctl health`
 6. Validate required env in `<skill-path>/.env`:
-   - `EWS_EMAIL`, `EWS_PASSWORD`, `EWS_AUTH_MODE=ntlm`
-   - `EWS_SYNC_FOLDERS`, `EWS_SYNC_LOOKBACK_DAYS`
+   - EWS: `MAIL_PROTOCOL=ews`, `EWS_EMAIL`, `EWS_USERNAME`, `EWS_PASSWORD`, `EWS_AUTH_MODE`, `EWS_SYNC_FOLDERS`
+   - Graph: `MAIL_PROTOCOL=graph`, `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`, `EWS_SYNC_FOLDERS`
 7. Reinstall only as last option:
    - `bash scripts/install.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill"`
 
 References
 - Setup and operations: `README.md`
-- Release process: `docs/releasing.md`
-- Validation checklist: `docs/openclaw-ops-checklist.md`
+- Validation checklist: `references/openclaw-ops-checklist.md`
