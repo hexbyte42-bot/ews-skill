@@ -875,6 +875,11 @@ impl EwsSkill {
                             )
                         })
                         .unwrap_or((0, 0, 0));
+                    let last_sync_at = self
+                        .repository
+                        .as_ref()
+                        .and_then(|r| r.latest_sync_at())
+                        .map(|d| d.to_rfc3339());
                     skill::ToolResult::ok(serde_json::json!({
                         "backend": "graph",
                         "ews_url": Value::Null,
@@ -887,7 +892,7 @@ impl EwsSkill {
                         "synced_folders": synced_folders,
                         "total_folders": total_folders,
                         "cached_emails": cached_emails,
-                        "last_sync_at": Value::Null,
+                        "last_sync_at": last_sync_at,
                         "error": err,
                     }))
                 }
