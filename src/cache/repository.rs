@@ -658,10 +658,21 @@ mod tests {
     use crate::cache::models::{CachedEmail, CachedFolder};
     use crate::cache::Database;
     use chrono::Utc;
-    fn test_repo() -> Repository {
-        let path = std::path::PathBuf::from(":memory:");
+    use tempfile::NamedTempFile;
+
+    struct TestRepo {
+        repo: Repository,
+        _temp: NamedTempFile,
+    }
+
+    fn test_repo() -> TestRepo {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let path = temp.path().to_path_buf();
         let db = Database::new(&path).expect("create test db");
-        Repository::new(db)
+        TestRepo {
+            repo: Repository::new(db),
+            _temp: temp,
+        }
     }
 
     fn test_folder(id: &str, display_name: &str) -> CachedFolder {
@@ -712,7 +723,8 @@ mod tests {
 
     #[test]
     fn list_folders_with_cached_counts_reflects_email_table() {
-        let repo = test_repo();
+        let tr = test_repo();
+        let repo = &tr.repo;
         repo.save_folder(&test_folder("inbox", "Inbox"));
 
         repo.save_email(&test_email("m1", "inbox", false));
@@ -729,7 +741,8 @@ mod tests {
 
     #[test]
     fn list_folders_with_cached_counts_tracks_mark_read_and_delete() {
-        let repo = test_repo();
+        let tr = test_repo();
+        let repo = &tr.repo;
         repo.save_folder(&test_folder("inbox", "Inbox"));
 
         repo.save_email(&test_email("m1", "inbox", false));
