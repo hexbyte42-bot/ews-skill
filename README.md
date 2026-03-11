@@ -8,9 +8,10 @@ Exchange email skill for OpenClaw with a local SQLite cache, supporting both EWS
 - On-prem Exchange via EWS SOAP
 - Microsoft 365 via Graph API (delegated OAuth)
 - Local cache in SQLite for fast AI reads
-- Server-side windowed sync with incremental cache updates
-- Autodiscover support
-- Auth modes: `basic`, `ntlm`
+- EWS: day-window incremental sync (`EWS_SYNC_LOOKBACK_DAYS`)
+- Graph: latest-N per-folder incremental sync (`GRAPH_SYNC_MAX_PER_FOLDER`)
+- EWS AutoDiscover support
+- EWS auth modes: `basic`, `ntlm`
 - OpenClaw-style tool definitions + dispatcher
 
 ## Protocol support
@@ -161,7 +162,7 @@ export MAIL_PROTOCOL='ews'
 # EWS-only
 export EWS_EMAIL='user@company.com'
 export EWS_PASSWORD='***'
-export EWS_USERNAME='DOMAIN\user'   # optional, defaults to EWS_EMAIL
+export EWS_USERNAME='user@company.com' # optional; usually same as EWS_EMAIL, set explicitly if login name differs
 export EWS_AUTH_MODE='ntlm'          # basic | ntlm
 export EWS_AUTODISCOVER=true         # or set EWS_URL
 # export EWS_URL='https://mail.company.com/EWS/Exchange.asmx'
@@ -407,7 +408,7 @@ Example:
 
 ## Error handling
 
-Standard error format:
+`ews_skillctl --json` CLI error wrapper format:
 
 ```json
 {
@@ -415,6 +416,20 @@ Standard error format:
   "ok": false
 }
 ```
+
+Daemon `tools.call` tool result format (canonical code is `code`):
+
+```json
+{
+  "success": false,
+  "data": null,
+  "error": "[E_NOT_FOUND] Email not found",
+  "code": "E_NOT_FOUND"
+}
+```
+
+`[E_*]` prefixes in error messages are best-effort normalization for readability.
+When `code` is present, treat `code` as authoritative.
 
 Common error codes:
 
@@ -424,6 +439,7 @@ Common error codes:
 - `E_NOT_FOUND`: missing email/folder/resource
 - `E_SYNC`: sync operation failure
 - `E_BUSY`: temporary contention/busy state
+- `E_UNKNOWN_TOOL`: requested tool name not recognized
 - `E_INTERNAL`: unexpected internal error
 
 Transient busy responses may include `retry_after_ms`. Client retry/backoff is built in; when running manually, retry after a short delay.

@@ -30,7 +30,7 @@ Configuration model
   - `EWS_SYNC_INTERVAL_SECONDS`
 - EWS-only:
   - `EWS_EMAIL`, `EWS_PASSWORD`, `EWS_AUTH_MODE`
-  - `EWS_USERNAME` (optional; defaults to `EWS_EMAIL`)
+  - `EWS_USERNAME` (optional; usually same as `EWS_EMAIL`, set explicitly if login name differs)
   - `EWS_AUTODISCOVER` or `EWS_URL`
   - `EWS_SYNC_LOOKBACK_DAYS`
 - Graph-only:
@@ -118,8 +118,9 @@ Behavior notes
 - `email_list_synced_folders` counts are cache-derived from local `emails` rows (`total_count`, `unread_count`).
 
 Error handling
-- Tool errors are normalized as `[E_*] message` (for example: `[E_NOT_FOUND] Email not found`).
-- Common codes: `OK`, `E_BAD_ARGS`, `E_AUTH`, `E_NOT_FOUND`, `E_SYNC`, `E_BUSY`, `E_INTERNAL`.
+- CLI output may include a best-effort normalized message prefix like `[E_NOT_FOUND]`.
+- Daemon `tools.call` responses include canonical `code` values; treat `code` as authoritative.
+- Common codes: `OK`, `E_BAD_ARGS`, `E_AUTH`, `E_NOT_FOUND`, `E_SYNC`, `E_BUSY`, `E_UNKNOWN_TOOL`, `E_INTERNAL`.
 
 Upgrade
 - Latest: `bash scripts/install.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill"`
