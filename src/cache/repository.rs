@@ -447,6 +447,24 @@ impl Repository {
         out
     }
 
+    pub fn latest_sync_at(&self) -> Option<chrono::DateTime<Utc>> {
+        let latest: Option<String> = {
+            let conn = self.db.connection();
+            let conn = conn.lock();
+
+            conn.query_row(
+                "SELECT last_sync_at FROM sync_states ORDER BY last_sync_at DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok()
+        };
+
+        latest
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&Utc))
+    }
+
     pub fn count_emails(&self) -> i64 {
         let conn = self.db.connection();
         let conn = conn.lock();
