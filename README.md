@@ -8,7 +8,7 @@ Exchange email skill for OpenClaw with a local SQLite cache, supporting both EWS
 - On-prem Exchange via EWS SOAP
 - Microsoft 365 via Graph API (delegated OAuth)
 - Local cache in SQLite for fast AI reads
-- EWS: day-window incremental sync (`EWS_SYNC_LOOKBACK_DAYS`)
+- EWS: day-window sync (`EWS_SYNC_LOOKBACK_DAYS`), or incremental sync-state mode when set to `0`
 - Graph: latest-N per-folder incremental sync (`GRAPH_SYNC_MAX_PER_FOLDER`)
 - EWS AutoDiscover support
 - EWS auth modes: `basic`, `ntlm`
@@ -21,6 +21,7 @@ Exchange email skill for OpenClaw with a local SQLite cache, supporting both EWS
 ```bash
 MAIL_PROTOCOL=ews
 EWS_EMAIL=user@company.com
+EWS_USERNAME=user@company.com
 EWS_PASSWORD=secret
 EWS_AUTH_MODE=ntlm
 EWS_AUTODISCOVER=true
@@ -162,7 +163,7 @@ export MAIL_PROTOCOL='ews'
 # EWS-only
 export EWS_EMAIL='user@company.com'
 export EWS_PASSWORD='***'
-export EWS_USERNAME='user@company.com' # optional; usually same as EWS_EMAIL, set explicitly if login name differs
+export EWS_USERNAME='user@company.com' # usually same as EWS_EMAIL; set explicitly if login name differs
 export EWS_AUTH_MODE='ntlm'          # basic | ntlm
 export EWS_AUTODISCOVER=true         # or set EWS_URL
 # export EWS_URL='https://mail.company.com/EWS/Exchange.asmx'
@@ -377,8 +378,8 @@ If you are not using OpenClaw external process mode, the crate still exposes `Ew
 
 ### EWS-specific sync behavior
 
-- Uses EWS incremental synchronization state.
-- `EWS_SYNC_LOOKBACK_DAYS` limits sync window by age (default `7`, set `0` for unlimited history).
+- `EWS_SYNC_LOOKBACK_DAYS > 0` (default `7`): rolling day-window sync via `find_items_since`.
+- `EWS_SYNC_LOOKBACK_DAYS = 0`: unlimited-history sync using EWS incremental sync state.
 
 ### Graph-specific sync behavior
 
@@ -417,7 +418,7 @@ Example:
 }
 ```
 
-Daemon `tools.call` tool result format (canonical code is `code`):
+Daemon `tools.call` tool result format:
 
 ```json
 {
@@ -428,8 +429,8 @@ Daemon `tools.call` tool result format (canonical code is `code`):
 }
 ```
 
-`[E_*]` prefixes in error messages are best-effort normalization for readability.
-When `code` is present, treat `code` as authoritative.
+`error` message prefixes (`[E_*]`) and `code` are both normalized best-effort classifications.
+Treat them as helpful categories, not strict protocol guarantees.
 
 Common error codes:
 
@@ -438,11 +439,10 @@ Common error codes:
 - `E_AUTH`: authentication/login issue
 - `E_NOT_FOUND`: missing email/folder/resource
 - `E_SYNC`: sync operation failure
-- `E_BUSY`: temporary contention/busy state
 - `E_UNKNOWN_TOOL`: requested tool name not recognized
 - `E_INTERNAL`: unexpected internal error
 
-Transient busy responses may include `retry_after_ms`. Client retry/backoff is built in; when running manually, retry after a short delay.
+Top-level JSON-RPC server-busy errors (`code=-32010`) may include `retry_after_ms` when the daemon queue is full. Client retry/backoff is built in; when running manually, retry after a short delay.
 
 ## Configuration examples
 
@@ -453,6 +453,7 @@ Recommended (AutoDiscover):
 ```bash
 MAIL_PROTOCOL=ews
 EWS_EMAIL=user@company.com
+EWS_USERNAME=user@company.com
 EWS_PASSWORD=secret
 EWS_AUTH_MODE=ntlm
 EWS_AUTODISCOVER=true
@@ -466,6 +467,7 @@ Alternative (manual URL):
 ```bash
 MAIL_PROTOCOL=ews
 EWS_EMAIL=user@company.com
+EWS_USERNAME=user@company.com
 EWS_PASSWORD=secret
 EWS_AUTH_MODE=ntlm
 EWS_AUTODISCOVER=false

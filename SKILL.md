@@ -30,7 +30,7 @@ Configuration model
   - `EWS_SYNC_INTERVAL_SECONDS`
 - EWS-only:
   - `EWS_EMAIL`, `EWS_PASSWORD`, `EWS_AUTH_MODE`
-  - `EWS_USERNAME` (optional; usually same as `EWS_EMAIL`, set explicitly if login name differs)
+  - `EWS_USERNAME` (usually same as `EWS_EMAIL`; set explicitly if login name differs)
   - `EWS_AUTODISCOVER` or `EWS_URL`
   - `EWS_SYNC_LOOKBACK_DAYS`
 - Graph-only:
@@ -103,8 +103,8 @@ Behavior notes
   - `EWS_SYNC_FOLDERS` defines sync scope.
   - `EWS_SYNC_INTERVAL_SECONDS` controls background polling in both protocols.
 - EWS sync behavior:
-  - Uses incremental sync state.
-  - `EWS_SYNC_LOOKBACK_DAYS` applies day-window sync (default `7`, `0` for unlimited history).
+  - `EWS_SYNC_LOOKBACK_DAYS > 0` (default `7`): rolling day-window sync via `find_items_since`.
+  - `EWS_SYNC_LOOKBACK_DAYS = 0`: unlimited-history sync using incremental sync state.
 - Graph sync behavior:
   - Uses latest-N sync per folder (no day-window equivalent).
   - `GRAPH_SYNC_MAX_PER_FOLDER` controls cap per folder.
@@ -119,8 +119,8 @@ Behavior notes
 
 Error handling
 - CLI output may include a best-effort normalized message prefix like `[E_NOT_FOUND]`.
-- Daemon `tools.call` responses include canonical `code` values; treat `code` as authoritative.
-- Common codes: `OK`, `E_BAD_ARGS`, `E_AUTH`, `E_NOT_FOUND`, `E_SYNC`, `E_BUSY`, `E_UNKNOWN_TOOL`, `E_INTERNAL`.
+- Daemon `tools.call` responses include best-effort normalized `code` values.
+- Common codes: `OK`, `E_BAD_ARGS`, `E_AUTH`, `E_NOT_FOUND`, `E_SYNC`, `E_UNKNOWN_TOOL`, `E_INTERNAL`.
 
 Upgrade
 - Latest: `bash scripts/install.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill"`
