@@ -9,6 +9,10 @@ metadata: {"clawdbot":{"emoji":"📧","requires":{"bins":["ews_skillctl","ews_sk
 
 `ews_skillctl` is the primary CLI for OpenClaw and operators. It talks to `ews_skilld` over unix socket.
 
+Protocol support
+- `MAIL_PROTOCOL=ews`: on-prem Exchange (EWS SOAP)
+- `MAIL_PROTOCOL=graph`: Microsoft 365 (Graph delegated auth)
+
 Quick start
 - `bash scripts/install.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill"`
 - Edit `$HOME/.openclaw/workspace/skill/ews-skill/.env`
@@ -18,6 +22,20 @@ Graph delegated login (single-tenant)
 - Set env: `MAIL_PROTOCOL=graph`, `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`
 - Run: `ews_skillctl login`
 - Clear token cache: `ews_skillctl logout`
+
+Configuration model
+- Shared:
+  - `MAIL_PROTOCOL`
+  - `EWS_SYNC_FOLDERS`
+  - `EWS_SYNC_INTERVAL_SECONDS`
+- EWS-only:
+  - `EWS_EMAIL`, `EWS_PASSWORD`, `EWS_AUTH_MODE`
+  - `EWS_USERNAME` (usually same as `EWS_EMAIL`; set explicitly if login name differs)
+  - `EWS_AUTODISCOVER` or `EWS_URL`
+  - `EWS_SYNC_LOOKBACK_DAYS`
+- Graph-only:
+  - `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`
+  - `GRAPH_SYNC_MAX_PER_FOLDER` (default `200`, max `200`)
 
 Golden path
 - `ews_skillctl tools`
@@ -79,17 +97,30 @@ Behavior notes
 - Timestamps are stored and returned in UTC.
 - For user-facing time queries, convert UTC to the user's local timezone before answering.
 - `email_delete` default moves to `Deleted Items`; `--skip-trash` uses Exchange `SoftDelete`.
-- Sync uses server-side lookback window `EWS_SYNC_LOOKBACK_DAYS` for all synced folders.
-  - default: `7`
-  - set `0` for unlimited history (heavier on large mailboxes)
+- Shared sync behavior:
+  - `email_sync_now` runs immediate sync.
+  - `email_add_folder` enrolls a folder and syncs immediately.
+  - `EWS_SYNC_FOLDERS` defines sync scope.
+  - `EWS_SYNC_INTERVAL_SECONDS` controls background polling in both protocols.
+- EWS sync behavior:
+  - `EWS_SYNC_LOOKBACK_DAYS > 0` (default `7`): rolling day-window sync via `find_items_since`.
+  - `EWS_SYNC_LOOKBACK_DAYS = 0`: unlimited-history sync using incremental sync state.
+- Graph sync behavior:
+  - Uses latest-N sync per folder (no day-window equivalent).
+  - `GRAPH_SYNC_MAX_PER_FOLDER` controls cap per folder.
 - CLI search applies a default time window if `--date-from/--date-to` are omitted.
   - default: `30` days (`EWS_CLI_SEARCH_DEFAULT_DAYS`)
   - use `--no-date-limit` to disable per query
 - `MAIL_PROTOCOL=graph` supports `health/list_server_folders/list_synced_folders/list/read/search/send/move/delete/mark_read`.
-- In Graph mode, background polling syncs local cache using `EWS_SYNC_INTERVAL_SECONDS`.
-- `EWS_SYNC_INTERVAL_SECONDS=0` disables Graph background polling (manual `email_sync_now` still works).
+- In Graph mode, `EWS_SYNC_INTERVAL_SECONDS=0` disables background polling (manual `email_sync_now` still works).
 - In Graph mode, `email_sync_now` syncs local cache for folders configured in `EWS_SYNC_FOLDERS` (latest `GRAPH_SYNC_MAX_PER_FOLDER` per folder, max 200).
 - In Graph mode, `email_add_folder` enrolls and immediately syncs that folder.
+- `email_list_synced_folders` counts are cache-derived from local `emails` rows (`total_count`, `unread_count`).
+
+Error handling
+- CLI output may include a best-effort normalized message prefix like `[E_NOT_FOUND]`.
+- Daemon `tools.call` responses include best-effort normalized `code` values.
+- Common codes: `OK`, `E_BAD_ARGS`, `E_AUTH`, `E_NOT_FOUND`, `E_SYNC`, `E_UNKNOWN_TOOL`, `E_INTERNAL`.
 
 Upgrade
 - Latest: `bash scripts/install.sh --skill-path "$HOME/.openclaw/workspace/skill/ews-skill"`
