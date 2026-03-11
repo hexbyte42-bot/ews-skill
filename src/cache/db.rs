@@ -10,7 +10,11 @@ pub struct Database {
 
 impl Database {
     pub fn new(path: &PathBuf) -> SqlResult<Self> {
-        let conn = Connection::open(path)?;
+        let conn = if path.as_os_str() == ":memory:" {
+            Connection::open_in_memory()?
+        } else {
+            Connection::open(path)?
+        };
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
 
         let db = Self {
@@ -128,5 +132,40 @@ impl Clone for Database {
         Self {
             conn: self.conn.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Database;
+    use std::path::PathBuf;
+
+    #[test]
+    fn memory_path_uses_real_in_memory_connection() {
+        let path = PathBuf::from(":memory:");
+
+        let db1 = Database::new(&path).expect("create first memory db");
+        {
+            let conn = db1.connection();
+            let conn = conn.lock();
+            conn.execute(
+                "INSERT INTO metadata (key, value) VALUES (?1, ?2)",
+                ["test_key", "value"],
+            )
+            .expect("insert metadata row");
+        }
+
+        let db2 = Database::new(&path).expect("create second memory db");
+        let conn2 = db2.connection();
+        let conn2 = conn2.lock();
+        let count: i64 = conn2
+            .query_row(
+                "SELECT COUNT(*) FROM metadata WHERE key = 'test_key'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query metadata row count");
+
+        assert_eq!(count, 0);
     }
 }

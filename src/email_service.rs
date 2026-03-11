@@ -54,7 +54,7 @@ impl EmailService {
     }
 
     pub fn list_folders(&self) -> Vec<CachedFolder> {
-        self.repository.list_folders()
+        self.repository.list_folders_with_cached_counts()
     }
 
     pub async fn list_server_folders(&self) -> Result<Vec<CachedFolder>, String> {
