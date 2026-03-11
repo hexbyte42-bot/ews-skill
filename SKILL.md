@@ -31,12 +31,14 @@ Post-install agent flow
 - If user says O365, guide `.env` with:
   - `MAIL_PROTOCOL=graph`
   - `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`
-  - shared sync keys (`EWS_SYNC_FOLDERS`, `EWS_SYNC_INTERVAL_SECONDS`, optional `GRAPH_SYNC_MAX_PER_FOLDER`)
+  - shared sync keys (`EWS_SYNC_FOLDERS`, `EWS_SYNC_INTERVAL_SECONDS`)
+  - Graph-only sync option (optional `GRAPH_SYNC_MAX_PER_FOLDER`)
 - If user says On-Prem, guide `.env` with:
   - `MAIL_PROTOCOL=ews`
   - `EWS_EMAIL`, `EWS_USERNAME`, `EWS_PASSWORD`, `EWS_AUTH_MODE`
   - `EWS_AUTODISCOVER` or `EWS_URL`
-  - shared sync keys (`EWS_SYNC_FOLDERS`, `EWS_SYNC_INTERVAL_SECONDS`, optional `EWS_SYNC_LOOKBACK_DAYS`)
+  - shared sync keys (`EWS_SYNC_FOLDERS`, `EWS_SYNC_INTERVAL_SECONDS`)
+  - EWS-only sync option (optional `EWS_SYNC_LOOKBACK_DAYS`)
 - Never ask users to paste secret values into chat; use placeholders and tell them to fill secrets directly in `.env`.
 
 Graph delegated login (single-tenant)

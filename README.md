@@ -185,23 +185,23 @@ $SKILL_PATH/bin/ews_skilld --transport unix --socket /run/ews-skill/daemon.sock
 3. Optional smoke test (source checkout only):
 
 ```bash
-./dev-scripts/smoke_test.sh
+bash dev-scripts/smoke_test.sh
 
 # Optional write-path checks
-SMOKE_DO_WRITE=true ./dev-scripts/smoke_test.sh
+SMOKE_DO_WRITE=true bash dev-scripts/smoke_test.sh
 
 # Optional delete behavior check:
 # default delete => Deleted Items, skip_trash=true => SoftDelete
-SMOKE_DO_WRITE=true SMOKE_TEST_DELETE_MODES=true ./dev-scripts/smoke_test.sh
+SMOKE_DO_WRITE=true SMOKE_TEST_DELETE_MODES=true bash dev-scripts/smoke_test.sh
 
 # Protocol parity matrix (EWS + Graph, cache/server/error contract checks)
-./dev-scripts/parity_matrix.sh
+bash dev-scripts/parity_matrix.sh
 
 # Run EWS parity only (recommended for NTLM validation)
-PARITY_PROTOCOL=ews PARITY_REQUIRE_EWS_AUTH=true ./dev-scripts/parity_matrix.sh
+PARITY_PROTOCOL=ews PARITY_REQUIRE_EWS_AUTH=true bash dev-scripts/parity_matrix.sh
 
 # Run Graph parity only
-PARITY_PROTOCOL=graph PARITY_REQUIRE_GRAPH_AUTH=true ./dev-scripts/parity_matrix.sh
+PARITY_PROTOCOL=graph PARITY_REQUIRE_GRAPH_AUTH=true bash dev-scripts/parity_matrix.sh
 ```
 
 ### Use released binary with OpenClaw
