@@ -9,7 +9,7 @@ Exchange email skill for OpenClaw with a local SQLite cache, supporting both EWS
 - Microsoft 365 via Graph API (delegated OAuth)
 - Local cache in SQLite for fast AI reads
 - EWS: day-window sync (`EWS_SYNC_LOOKBACK_DAYS`), or incremental sync-state mode when set to `0`
-- Graph: latest-N per-folder incremental sync (`GRAPH_SYNC_MAX_PER_FOLDER`)
+- Graph: latest-N per-folder snapshot sync (`GRAPH_SYNC_MAX_PER_FOLDER`)
 - EWS AutoDiscover support
 - EWS auth modes: `basic`, `ntlm`
 - OpenClaw-style tool definitions + dispatcher
@@ -383,7 +383,7 @@ If you are not using OpenClaw external process mode, the crate still exposes `Ew
 
 ### Graph-specific sync behavior
 
-- Uses latest-N sync per folder, not day-window sync.
+- Uses latest-N snapshot sync per folder, not day-window sync.
 - `GRAPH_SYNC_MAX_PER_FOLDER` controls the per-folder cap (default `200`, max `200`).
 
 ## Folder count behavior
