@@ -541,6 +541,6 @@ Recipient lists are JSON strings in `to_recipients` and `cc_recipients`.
 
 ## Notes
 
-- Keep secrets and confidential identifiers (including `GRAPH_CLIENT_ID`) out of git and chat.
+- Keep secrets and confidential identifier values (client IDs, tenant IDs, API keys, tokens, etc.) out of git and chat. It is fine to mention environment variable names like `GRAPH_CLIENT_ID` and `GRAPH_TENANT_ID`, but never their actual values.
 - `ntlm` mode uses libcurl transport.
 - Cache DB defaults to `~/.local/share/ews-skill/ews_cache.db`.

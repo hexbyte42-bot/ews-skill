@@ -39,7 +39,7 @@ Post-install agent flow
   - `EWS_AUTODISCOVER` or `EWS_URL`
   - shared sync keys (`EWS_SYNC_FOLDERS`, `EWS_SYNC_INTERVAL_SECONDS`)
   - EWS-only sync option (optional `EWS_SYNC_LOOKBACK_DAYS`)
-- Never ask users to paste secrets or sensitive identifier values (including `GRAPH_CLIENT_ID` and `GRAPH_TENANT_ID`) into chat; use placeholders and tell them to fill values directly in `.env`.
+- Never ask users to paste secrets or sensitive identifier values (including values of env vars such as `GRAPH_CLIENT_ID` and `GRAPH_TENANT_ID`) into chat; use placeholders and tell them to fill values directly in `.env`.
 
 Graph delegated login (single-tenant)
 - Set env: `MAIL_PROTOCOL=graph`, `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`
