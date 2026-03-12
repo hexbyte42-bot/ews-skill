@@ -14,7 +14,7 @@ Agent scope and safety rules
 - Do not inspect `src/*` unless the user explicitly asks for code-level debugging or implementation changes.
 - After installation completes, always ask one routing question: "Is your mailbox Microsoft 365 (O365/Exchange Online) or On-Prem Exchange?"
 - Based on the answer, provide only the corresponding `.env` keys to configure and clearly list which values the user must fill.
-- Instruct users to edit `.env` manually on their machine; never request, collect, or echo passwords, tokens, client secrets, or other sensitive values in chat.
+- Instruct users to edit `.env` manually on their machine; you may mention required key names (for example `GRAPH_CLIENT_ID`), but never request, collect, or echo secret or sensitive values in chat.
 - `.env` must never be committed; it is git-ignored in this repository.
 
 Protocol support
@@ -39,7 +39,7 @@ Post-install agent flow
   - `EWS_AUTODISCOVER` or `EWS_URL`
   - shared sync keys (`EWS_SYNC_FOLDERS`, `EWS_SYNC_INTERVAL_SECONDS`)
   - EWS-only sync option (optional `EWS_SYNC_LOOKBACK_DAYS`)
-- Never ask users to paste secret values into chat; use placeholders and tell them to fill secrets directly in `.env`.
+- Never ask users to paste secrets or sensitive identifier values (including values of env vars such as `GRAPH_CLIENT_ID` and `GRAPH_TENANT_ID`) into chat; use placeholders and tell them to fill values directly in `.env`.
 
 Graph delegated login (single-tenant)
 - Set env: `MAIL_PROTOCOL=graph`, `GRAPH_CLIENT_ID`, `GRAPH_TENANT_ID`
